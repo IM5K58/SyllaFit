@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
+python-dotenv>=1.0
+psycopg[binary]>=3.2   # 부팅 시 Neon에서 캐시 blob 다운로드용

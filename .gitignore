@@ -1,0 +1,31 @@
+# 키/비밀 — 절대 커밋 금지
+.env
+backend/.env
+*.env
+.env*.local
+!*.env.example
+
+# 크롤러 산출물 (대용량, 재생성 가능) — 공개 저장소라 캐시도 커밋 안 함.
+# 배포 백엔드는 Neon(cache_blobs)에서 부팅 시 받아옴. 업로드: backend/upload_cache.py
+crawler/raw/
+crawler/state/
+crawler/samples/
+crawler/cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Node/Next
+node_modules/
+.next/
+dist/
+
+#문서
+docs/
+
+#claude 관련
+.claude/

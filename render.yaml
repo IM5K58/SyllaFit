@@ -1,0 +1,22 @@
+# Render 블루프린트 — 백엔드(FastAPI) 배포.
+# Render 대시보드 → New → Blueprint → 이 저장소 선택하면 자동 인식.
+# SOLAR_API_KEY, ALLOWED_ORIGINS 는 비밀/후결정이라 대시보드에서 직접 입력(sync:false).
+services:
+  - type: web
+    name: syllafit-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # $PORT 는 Render가 주입. 0.0.0.0 바인딩 필수.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      - key: SOLAR_API_KEY
+        sync: false            # 대시보드에서 실제 Upstage 키 입력 (절대 커밋 금지)
+      - key: ALLOWED_ORIGINS
+        sync: false            # 프론트(Vercel) 배포 후 그 URL 입력. 예: https://syllafit.vercel.app
+      - key: DATABASE_URL
+        sync: false            # Neon connection string. 부팅 시 캐시(cache_blobs)를 받아옴
