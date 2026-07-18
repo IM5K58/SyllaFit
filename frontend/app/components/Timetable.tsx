@@ -21,7 +21,7 @@ function periodLabel(p: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-interface Item { key: string; name: string; blocks: Block[]; }
+interface Item { key: string; name: string; blocks: Block[]; raw: string; }
 
 export default function Timetable({
   courses,
@@ -34,7 +34,11 @@ export default function Timetable({
 }) {
   const items: Item[] = courses
     .filter((c): c is Course => !!c)
-    .map((c) => ({ key: c.key, name: c.kwamok_kname, blocks: c.room_time || [] }));
+    .map((c) => ({ key: c.key, name: c.kwamok_kname, blocks: c.room_time || [], raw: c.room_time_raw || "" }));
+
+  // 과목별 색 (그리드 블록·온라인 카드에서 동일 색 사용)
+  const colorOf: Record<string, [string, string]> = {};
+  items.forEach((it, i) => (colorOf[it.key] = PALETTE[i % PALETTE.length]));
 
   // 표시할 요일 = 실제 사용된 요일(월~금은 기본), 교시 범위 = 사용된 최소~최대
   const usedDays = new Set<string>();
@@ -51,14 +55,35 @@ export default function Timetable({
   );
   const onlineOnly = items.filter((it) => it.blocks.length === 0);
 
+  // 온라인 강의(시간표에 자리 없는 것) — 격자 아래 '연장선' 카드로 크게 표시 + 셀 정보.
+  const onlineBlock = onlineOnly.length > 0 && (
+    <div style={{ marginTop: 10 }}>
+      <div className="muted" style={{ fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>
+        온라인 강의 <span style={{ fontWeight: 400 }}>(정해진 시간 없음)</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {onlineOnly.map((it) => {
+          const [bg, fg] = colorOf[it.key];
+          return (
+            <div key={it.key} style={{
+              background: bg, color: fg, borderLeft: `4px solid ${fg}`,
+              borderRadius: 8, padding: "9px 12px", minWidth: 130,
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 13.5 }}>{it.name}</div>
+              <div style={{ fontWeight: 500, fontSize: 12, opacity: 0.9, marginTop: 3 }}>
+                {it.raw || "온라인 / 시간 미정"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   if (!isFinite(minP)) {
     if (!full) {
-      // 전부 온라인/미정 (컴팩트 모드)
-      return (
-        <div className="muted" style={{ padding: "6px 0" }}>
-          온라인/시간 미정: {onlineOnly.map((i) => i.name).join(", ") || "없음"}
-        </div>
-      );
+      // 시간 있는 강의가 없음 — 그리드 없이 온라인 카드만
+      return <div>{onlineBlock || <div className="muted" style={{ padding: "6px 0" }}>표시할 강의가 없어요.</div>}</div>;
     }
     minP = 1;
     maxP = 26; // 빈 격자: 09:00~22:00
@@ -72,10 +97,6 @@ export default function Timetable({
   const startP = minP;
   const endP = maxP;
   const nRows = endP - startP + 1;
-
-  // 과목별 색
-  const colorOf: Record<string, [string, string]> = {};
-  items.forEach((it, i) => (colorOf[it.key] = PALETTE[i % PALETTE.length]));
 
   const ROW_H = 32;
 
@@ -189,11 +210,7 @@ export default function Timetable({
           })
         )}
       </div>
-      {onlineOnly.length > 0 && (
-        <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
-          + 온라인/미정: {onlineOnly.map((i) => i.name).join(", ")}
-        </div>
-      )}
+      {onlineBlock}
     </div>
   );
 }
