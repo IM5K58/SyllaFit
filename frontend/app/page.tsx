@@ -92,7 +92,6 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="muted" style={{ marginTop: 13, fontSize: 12.5 }}>
-                  에타는 이 둘을 구분 못 해요.{" "}
                   <b style={{ color: "var(--text-2)" }}>SyllaFit은 계획서를 읽고 골라줘요.</b>
                 </div>
               </div>
