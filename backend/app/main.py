@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 from . import advise, alpha, backup, beta, cache_store, gamma, qa, scheduling
@@ -22,6 +23,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SyllaFit API", version="0.1.0", lifespan=lifespan)
+
+# 응답 gzip 압축 — /courses(2.2MB) 같은 큰 JSON을 ~400KB로 줄여 초기 로딩 단축.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # v1: 무로그인. 허용 오리진은 설정(config)에서 — 배포 도메인은 ALLOWED_ORIGINS env로.
 app.add_middleware(
