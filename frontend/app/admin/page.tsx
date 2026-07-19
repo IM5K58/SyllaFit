@@ -26,8 +26,17 @@ export default async function AdminPage() {
     );
   }
 
-  const stats = dbEnabled ? await getStats() : null;
-  const notices = dbEnabled ? await getAllNotices() : [];
+  // DB 호출이 실패해도 페이지 자체는 뜨게(빈 상태로) — 500 크래시 방지.
+  let stats = null;
+  let notices: Awaited<ReturnType<typeof getAllNotices>> = [];
+  let dbError: string | null = null;
+  if (dbEnabled) {
+    try {
+      [stats, notices] = await Promise.all([getStats(), getAllNotices()]);
+    } catch (e) {
+      dbError = String(e);
+    }
+  }
 
   return (
     <div className="container" style={{ maxWidth: 760, paddingTop: 36 }}>
@@ -41,11 +50,13 @@ export default async function AdminPage() {
         <div className="h-sec"><span className="step">1</span>통계</div>
         {!dbEnabled ? (
           <p className="muted">DATABASE_URL 미설정 — DB 통계를 볼 수 없어요.</p>
+        ) : !stats ? (
+          <p className="muted">통계를 불러오지 못했어요. (DB 오류: {dbError?.slice(0, 200)})</p>
         ) : (
           <div className="row" style={{ gap: 24, flexWrap: "wrap" }}>
-            <Stat label="로그인 사용자" value={stats!.users} />
-            <Stat label="저장된 시간표" value={stats!.savedTimetables} />
-            <Stat label="작성 중 시간표" value={stats!.activeWorking} />
+            <Stat label="로그인 사용자" value={stats.users} />
+            <Stat label="저장된 시간표" value={stats.savedTimetables} />
+            <Stat label="작성 중 시간표" value={stats.activeWorking} />
           </div>
         )}
         <p className="muted" style={{ marginTop: 12, fontSize: 12 }}>

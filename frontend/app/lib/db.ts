@@ -104,13 +104,18 @@ export interface Stats { users: number; savedTimetables: number; activeWorking: 
 export async function getStats(): Promise<Stats> {
   if (!sql) return { users: 0, savedTimetables: 0, activeWorking: 0 };
   await ensureSchema();
+  // jsonb_typeof 가드: working/library 가 배열이 아니어도 throw 안 나게. FILTER는 괄호로 캐스트 명확화.
   const rows = await sql`
     SELECT
       count(*)::int AS users,
-      coalesce(sum(jsonb_array_length(library)), 0)::int AS saved,
-      count(*) FILTER (WHERE jsonb_array_length(working) > 0)::int AS active_working
+      coalesce(sum(CASE WHEN jsonb_typeof(library) = 'array' THEN jsonb_array_length(library) ELSE 0 END), 0)::int AS saved,
+      (count(*) FILTER (WHERE jsonb_typeof(working) = 'array' AND jsonb_array_length(working) > 0))::int AS active_working
     FROM user_data
   `;
   const r = rows[0] || {};
-  return { users: r.users ?? 0, savedTimetables: r.saved ?? 0, activeWorking: r.active_working ?? 0 };
+  return {
+    users: Number(r.users ?? 0),
+    savedTimetables: Number(r.saved ?? 0),
+    activeWorking: Number(r.active_working ?? 0),
+  };
 }
