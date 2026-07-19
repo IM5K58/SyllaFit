@@ -207,6 +207,11 @@ function timeText(c?: Course): string {
   return c.room_time.map((b) => `${b.day}${b.periods.join(",")}`).join(" ");
 }
 
+// 검색 정규화 — 소문자 + 공백 제거. "일반수학2" ↔ "일반수학 2" ↔ "일반 수학2" 다 매칭.
+function norm(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, "");
+}
+
 
 // ── 마이페이지: 내 시간표 + 보관함 ──
 function MyPage({
@@ -545,12 +550,12 @@ function ManualBuilder({
   const [fbChain, setFbChain] = useState<{ key: string; rank: number; reason: string }[]>([]);
 
   const results = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = norm(search);
     if (!q) return [];
     return courses
-      .filter((c) => c.kwamok_kname.toLowerCase().includes(q)
-        || c.key.toLowerCase().includes(q)
-        || (c.prof_name || "").toLowerCase().includes(q))
+      .filter((c) => norm(c.kwamok_kname).includes(q)
+        || norm(c.key).includes(q)
+        || norm(c.prof_name || "").includes(q))
       .slice(0, 60); // 분반 많은 과목(일반수학2=47개)도 다 보이게
   }, [search, courses]);
 
@@ -883,11 +888,11 @@ function AiPlanner({
   }, [courses]);
 
   const found = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = norm(search);
     if (!q) return [];
     return Object.values(groups)
-      .filter((g) => g.name.toLowerCase().includes(q) || g.haksu_no.toLowerCase().includes(q)
-        || g.profs.some((p) => p.toLowerCase().includes(q)))
+      .filter((g) => norm(g.name).includes(q) || norm(g.haksu_no).includes(q)
+        || g.profs.some((p) => norm(p).includes(q)))
       .slice(0, 20);
   }, [search, groups]);
 

@@ -21,7 +21,7 @@ function periodLabel(p: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-interface Item { key: string; name: string; blocks: Block[]; raw: string; }
+interface Item { key: string; name: string; prof: string; blocks: Block[]; raw: string; }
 
 export default function Timetable({
   courses,
@@ -34,7 +34,7 @@ export default function Timetable({
 }) {
   const items: Item[] = courses
     .filter((c): c is Course => !!c)
-    .map((c) => ({ key: c.key, name: c.kwamok_kname, blocks: c.room_time || [], raw: c.room_time_raw || "" }));
+    .map((c) => ({ key: c.key, name: c.kwamok_kname, prof: c.prof_name || "", blocks: c.room_time || [], raw: c.room_time_raw || "" }));
 
   // 과목별 색 (그리드 블록·온라인 카드에서 동일 색 사용)
   const colorOf: Record<string, [string, string]> = {};
@@ -204,7 +204,11 @@ export default function Timetable({
                 }}
               >
                 {it.name}
-                {b.room && <div style={{ fontWeight: 400, fontSize: 10 }}>{b.room}</div>}
+                {(it.prof || b.room) && (
+                  <div style={{ fontWeight: 400, fontSize: 10, opacity: 0.9 }}>
+                    {[it.prof, b.room].filter(Boolean).join(" · ")}
+                  </div>
+                )}
               </div>
             );
           })
