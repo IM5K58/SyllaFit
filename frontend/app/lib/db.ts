@@ -156,23 +156,47 @@ export async function logEvent(
   `;
 }
 
+export interface DailyPoint { day: string; visits: number; ai: number; saves: number; sessions: number; }
 export interface EventStats {
   totalEvents: number;
   uniqueSessions: number;
   byName: { name: string; n: number }[];
   topSearch: { q: string; n: number }[];
   funnel: { visits: number; aiGenerate: number; logins: number; saves: number };
+  daily: DailyPoint[];
+  retention: { totalSessions: number; returningSessions: number };
 }
 
 export async function getEventStats(): Promise<EventStats> {
-  const empty: EventStats = { totalEvents: 0, uniqueSessions: 0, byName: [], topSearch: [], funnel: { visits: 0, aiGenerate: 0, logins: 0, saves: 0 } };
+  const empty: EventStats = {
+    totalEvents: 0, uniqueSessions: 0, byName: [], topSearch: [],
+    funnel: { visits: 0, aiGenerate: 0, logins: 0, saves: 0 },
+    daily: [], retention: { totalSessions: 0, returningSessions: 0 },
+  };
   if (!sql) return empty;
   await ensureSchema();
-  const [totals, byName, topSearch] = await Promise.all([
+  const [totals, byName, topSearch, daily, retention] = await Promise.all([
     sql`SELECT count(*)::int AS total, count(DISTINCT session)::int AS sessions FROM events`,
     sql`SELECT name, count(*)::int AS n FROM events GROUP BY name ORDER BY n DESC LIMIT 20`,
     sql`SELECT props->>'q' AS q, count(*)::int AS n FROM events
         WHERE name = 'search' AND coalesce(props->>'q','') <> '' GROUP BY 1 ORDER BY n DESC LIMIT 10`,
+    // 최근 14일 일별 추이
+    sql`SELECT
+          to_char(date_trunc('day', created_at), 'MM-DD') AS day,
+          count(*) FILTER (WHERE name = 'tool_view')::int AS visits,
+          count(*) FILTER (WHERE name = 'ai_generate')::int AS ai,
+          count(*) FILTER (WHERE name = 'save')::int AS saves,
+          count(DISTINCT session)::int AS sessions
+        FROM events
+        WHERE created_at >= now() - interval '14 days'
+        GROUP BY date_trunc('day', created_at)
+        ORDER BY date_trunc('day', created_at)`,
+    // 재방문: 2일 이상 등장한 세션 비율
+    sql`WITH sd AS (
+          SELECT session, count(DISTINCT date_trunc('day', created_at)) AS days
+          FROM events WHERE session IS NOT NULL GROUP BY session
+        )
+        SELECT count(*)::int AS total, count(*) FILTER (WHERE days >= 2)::int AS returning FROM sd`,
   ]);
   const cnt = (nm: string) => Number((byName as { name: string; n: number }[]).find((x) => x.name === nm)?.n ?? 0);
   return {
@@ -181,5 +205,9 @@ export async function getEventStats(): Promise<EventStats> {
     byName: (byName as { name: string; n: number }[]).map((x) => ({ name: x.name, n: Number(x.n) })),
     topSearch: (topSearch as { q: string; n: number }[]).map((x) => ({ q: x.q, n: Number(x.n) })),
     funnel: { visits: cnt("tool_view"), aiGenerate: cnt("ai_generate"), logins: cnt("login"), saves: cnt("save") },
+    daily: (daily as Record<string, unknown>[]).map((d) => ({
+      day: String(d.day), visits: Number(d.visits), ai: Number(d.ai), saves: Number(d.saves), sessions: Number(d.sessions),
+    })),
+    retention: { totalSessions: Number(retention[0]?.total ?? 0), returningSessions: Number(retention[0]?.returning ?? 0) },
   };
 }

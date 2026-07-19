@@ -72,15 +72,28 @@ export default async function AdminPage() {
           <p className="muted">아직 수집된 이벤트가 없어요. (배포 후 사용자가 도구를 쓰면 쌓여요)</p>
         ) : (
           <>
-            {/* 퍼널 */}
+            {/* 퍼널 + 재방문율 */}
             <div className="row" style={{ gap: 20, flexWrap: "wrap", marginBottom: 16 }}>
               <Stat label="도구 방문" value={events.funnel.visits} />
               <Stat label="AI 시간표 생성" value={events.funnel.aiGenerate} />
               <Stat label="로그인 세션" value={events.funnel.logins} />
               <Stat label="시간표 저장" value={events.funnel.saves} />
+              <RetentionStat total={events.retention.totalSessions} returning={events.retention.returningSessions} />
             </div>
             <div className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
               고유 세션 {events.uniqueSessions.toLocaleString()} · 총 이벤트 {events.totalEvents.toLocaleString()}
+              {" · 재방문 세션 "}{events.retention.returningSessions.toLocaleString()}/{events.retention.totalSessions.toLocaleString()}
+              {" (2일 이상 방문)"}
+            </div>
+
+            {/* 날짜별 추이 */}
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>날짜별 추이 (최근 14일)</div>
+              {events.daily.length === 0 ? (
+                <p className="muted" style={{ fontSize: 13 }}>아직 없어요.</p>
+              ) : (
+                <DailyChart data={events.daily} />
+              )}
             </div>
 
             <div className="row" style={{ gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -130,6 +143,40 @@ function eventLabel(name: string): string {
     save: "시간표 저장", backup_generate: "실패대비 생성", login: "로그인", advise: "AI 검토",
   };
   return m[name] || name;
+}
+
+function RetentionStat({ total, returning }: { total: number; returning: number }) {
+  const rate = total > 0 ? Math.round((returning / total) * 100) : 0;
+  return (
+    <div>
+      <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--accent)" }}>{rate}%</div>
+      <div className="muted" style={{ fontSize: 13 }}>재방문율</div>
+    </div>
+  );
+}
+
+// 날짜별 방문 막대 + 세션 수(작은 라벨). 차트 라이브러리 없이 CSS 막대.
+function DailyChart({ data }: { data: { day: string; visits: number; ai: number; saves: number; sessions: number }[] }) {
+  const max = Math.max(1, ...data.map((d) => d.visits));
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 130, overflowX: "auto", paddingBottom: 2 }}>
+      {data.map((d) => (
+        <div key={d.day} style={{ flex: "1 0 34px", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700 }}>{d.visits}</span>
+          <div
+            title={`${d.day} · 방문 ${d.visits} · AI ${d.ai} · 저장 ${d.saves} · 세션 ${d.sessions}`}
+            style={{
+              width: "100%", maxWidth: 26,
+              height: `${Math.round((d.visits / max) * 96)}px`,
+              minHeight: 3, borderRadius: 5,
+              background: "var(--accent)",
+            }}
+          />
+          <span className="muted" style={{ fontSize: 10 }}>{d.day}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
