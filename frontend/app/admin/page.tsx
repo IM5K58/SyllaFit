@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { auth } from "@/auth";
 import { isAdminEmail } from "@/app/lib/admin";
-import { dbEnabled, getStats, getAllNotices } from "@/app/lib/db";
+import { dbEnabled, getStats, getAllNotices, getEventStats, type EventStats } from "@/app/lib/db";
 import AdminNotices from "../components/AdminNotices";
 
 export const dynamic = "force-dynamic"; // 세션·DB 실시간 조회
@@ -29,10 +29,11 @@ export default async function AdminPage() {
   // DB 호출이 실패해도 페이지 자체는 뜨게(빈 상태로) — 500 크래시 방지.
   let stats = null;
   let notices: Awaited<ReturnType<typeof getAllNotices>> = [];
+  let events: EventStats | null = null;
   let dbError: string | null = null;
   if (dbEnabled) {
     try {
-      [stats, notices] = await Promise.all([getStats(), getAllNotices()]);
+      [stats, notices, events] = await Promise.all([getStats(), getAllNotices(), getEventStats()]);
     } catch (e) {
       dbError = String(e);
     }
@@ -64,9 +65,55 @@ export default async function AdminPage() {
         </p>
       </div>
 
+      {/* 행동 통계 */}
+      <div className="panel">
+        <div className="h-sec"><span className="step">2</span>행동 통계</div>
+        {!events || events.totalEvents === 0 ? (
+          <p className="muted">아직 수집된 이벤트가 없어요. (배포 후 사용자가 도구를 쓰면 쌓여요)</p>
+        ) : (
+          <>
+            {/* 퍼널 */}
+            <div className="row" style={{ gap: 20, flexWrap: "wrap", marginBottom: 16 }}>
+              <Stat label="도구 방문" value={events.funnel.visits} />
+              <Stat label="AI 시간표 생성" value={events.funnel.aiGenerate} />
+              <Stat label="로그인 세션" value={events.funnel.logins} />
+              <Stat label="시간표 저장" value={events.funnel.saves} />
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
+              고유 세션 {events.uniqueSessions.toLocaleString()} · 총 이벤트 {events.totalEvents.toLocaleString()}
+            </div>
+
+            <div className="row" style={{ gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
+              {/* 이벤트별 */}
+              <div style={{ flex: "1 1 220px" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>이벤트별 발생 수</div>
+                {events.byName.map((e) => (
+                  <div key={e.name} className="row" style={{ justifyContent: "space-between", padding: "3px 0", fontSize: 13 }}>
+                    <span className="muted">{eventLabel(e.name)}</span>
+                    <b>{e.n.toLocaleString()}</b>
+                  </div>
+                ))}
+              </div>
+              {/* 인기 검색어 */}
+              <div style={{ flex: "1 1 220px" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>인기 검색어 TOP 10</div>
+                {events.topSearch.length === 0 ? (
+                  <p className="muted" style={{ fontSize: 13 }}>아직 없어요.</p>
+                ) : events.topSearch.map((s, i) => (
+                  <div key={s.q} className="row" style={{ justifyContent: "space-between", padding: "3px 0", fontSize: 13 }}>
+                    <span className="muted">{i + 1}. {s.q}</span>
+                    <b>{s.n.toLocaleString()}</b>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
       {/* 공지 관리 */}
       <div className="panel">
-        <div className="h-sec"><span className="step">2</span>공지사항 관리</div>
+        <div className="h-sec"><span className="step">3</span>공지사항 관리</div>
         {!dbEnabled ? (
           <p className="muted">DATABASE_URL 을 설정하면 공지를 등록할 수 있어요.</p>
         ) : (
@@ -75,6 +122,14 @@ export default async function AdminPage() {
       </div>
     </div>
   );
+}
+
+function eventLabel(name: string): string {
+  const m: Record<string, string> = {
+    tool_view: "도구 방문", tab: "탭 전환", search: "검색", ai_generate: "AI 시간표 생성",
+    save: "시간표 저장", backup_generate: "실패대비 생성", login: "로그인", advise: "AI 검토",
+  };
+  return m[name] || name;
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

@@ -8,6 +8,7 @@ import {
   type Dispatch, type SetStateAction,
 } from "react";
 import { useSession } from "next-auth/react";
+import { logEvent } from "./analytics";
 
 export interface SavedTT { name: string; keys: string[]; savedAt: string; }
 
@@ -58,6 +59,7 @@ export function TimetableProvider({ children }: { children: React.ReactNode }) {
           setLibrary(Array.isArray(d.library) ? d.library : []);
         }
         setCloudEnabled(true); // 로그인 전 작업이 있으면 아래 저장 effect가 서버로 올림
+        logEvent("login"); // 로그인 세션 (행동 통계)
       } catch {
         if (!cancelled) setCloudEnabled(false);
       }
@@ -88,6 +90,7 @@ export function TimetableProvider({ children }: { children: React.ReactNode }) {
     }
     const entry: SavedTT = { name: finalName, keys, savedAt: new Date().toISOString().slice(0, 10) };
     setLibrary((prev) => [entry, ...prev]);
+    logEvent("save", { courses: keys.length });
     return finalName;
   }
 

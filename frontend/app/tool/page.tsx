@@ -24,6 +24,7 @@ import AuthButton from "../components/AuthButton";
 import NoticeBanner from "../components/NoticeBanner";
 import { downloadTimetableImage } from "../lib/timetableImage";
 import { TimetableProvider, useTimetables, SavedTT } from "../lib/timetableStore";
+import { logEvent } from "../lib/analytics";
 
 type Detail = Course & { syllabus: Syllabus | null };
 
@@ -52,6 +53,9 @@ function ToolInner() {
   const [backupSeed, setBackupSeed] = useState<string[] | null>(null);
 
   const { my, setMy } = useTimetables();
+
+  // 방문 로깅 (행동 통계)
+  useEffect(() => { logEvent("tool_view"); }, []);
 
   // ?tab=my 같은 딥링크로 탭 열기 (앱바 '마이페이지' 메뉴 등). 값 바뀔 때마다 반영.
   useEffect(() => {
@@ -138,7 +142,7 @@ function ToolInner() {
             <button
               key={id}
               className={`tab${tab === id ? " active" : ""}`}
-              onClick={() => setTab(id)}
+              onClick={() => { setTab(id); logEvent("tab", { tab: id }); }}
             >
               {label}
             </button>
@@ -377,6 +381,7 @@ function BackupPage({
   async function generate() {
     if (risky.length === 0) { setErr("실패할 것 같은 과목을 하나 이상 선택해 주세요."); return; }
     setBusy(true); setErr(null); setRes(null); setShowAll(false); setSavedMsg(null);
+    logEvent("backup_generate", { risky: risky.length });
     try {
       setRes(await backupTimetables(source, risky));
     } catch (e) {
@@ -548,6 +553,14 @@ function ManualBuilder({
   const [fbKey, setFbKey] = useState<string | null>(null);
   const [fbBusy, setFbBusy] = useState(false);
   const [fbChain, setFbChain] = useState<{ key: string; rank: number; reason: string }[]>([]);
+
+  // 검색어 로깅(디바운스) — 인기 검색어 통계용
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) return;
+    const t = setTimeout(() => logEvent("search", { q: q.slice(0, 40) }), 1500);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const results = useMemo(() => {
     const q = norm(search);
@@ -838,6 +851,12 @@ function AiPlanner({
 }) {
   const { saveToLibrary } = useTimetables();
   const [search, setSearch] = useState("");
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 2) return;
+    const t = setTimeout(() => logEvent("search", { q: q.slice(0, 40) }), 1500);
+    return () => clearTimeout(t);
+  }, [search]);
   const [picked, setPicked] = useState<string[]>([]); // 학수번호
   const [preference, setPreference] = useState("오전 수업은 피하고, 팀플·과제 적은 걸로");
   const [result, setResult] = useState<RankResult | null>(null);
@@ -902,6 +921,7 @@ function AiPlanner({
 
   async function run() {
     setBusy(true); setErr(null); setResult(null); setShowAll(false); setSavedMsg(null);
+    logEvent("ai_generate", { courses: picked.length });
     try {
       const r = await aiTimetable(picked, preference);
       setResult(r);

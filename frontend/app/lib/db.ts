@@ -36,6 +36,18 @@ function ensureSchema(): Promise<void> {
           created_at timestamptz NOT NULL DEFAULT now()
         )
       `;
+      await s`
+        CREATE TABLE IF NOT EXISTS events (
+          id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+          name       text NOT NULL,               -- tool_view, tab, search, ai_generate, save, backup_generate, login
+          props      jsonb NOT NULL DEFAULT '{}',
+          session    text,                        -- 익명 세션 id
+          email      text,                        -- 로그인 시에만(서버 세션에서)
+          created_at timestamptz NOT NULL DEFAULT now()
+        )
+      `;
+      await s`CREATE INDEX IF NOT EXISTS events_name_idx ON events (name)`;
+      await s`CREATE INDEX IF NOT EXISTS events_created_idx ON events (created_at)`;
     })();
   }
   return ready;
@@ -66,18 +78,30 @@ export async function putUserData(email: string, data: UserData): Promise<void> 
 // ── 공지사항 ──────────────────────────────────────────────
 export interface Notice { id: number; body: string; level: string; active: boolean; created_at: string; }
 
+// Neon 드라이버는 bigint를 문자열, timestamptz를 Date로 반환 → 직렬화·slice 안전하게 정규화.
+function normNotice(r: Record<string, unknown>): Notice {
+  const ca = r.created_at;
+  return {
+    id: Number(r.id),
+    body: String(r.body ?? ""),
+    level: String(r.level ?? "info"),
+    active: !!r.active,
+    created_at: ca instanceof Date ? ca.toISOString() : String(ca ?? ""),
+  };
+}
+
 export async function getActiveNotices(): Promise<Notice[]> {
   if (!sql) return [];
   await ensureSchema();
   const rows = await sql`SELECT id, body, level, active, created_at FROM notices WHERE active = true ORDER BY created_at DESC`;
-  return rows as Notice[];
+  return rows.map(normNotice);
 }
 
 export async function getAllNotices(): Promise<Notice[]> {
   if (!sql) return [];
   await ensureSchema();
   const rows = await sql`SELECT id, body, level, active, created_at FROM notices ORDER BY created_at DESC LIMIT 100`;
-  return rows as Notice[];
+  return rows.map(normNotice);
 }
 
 export async function createNotice(body: string, level: string): Promise<void> {
@@ -117,5 +141,45 @@ export async function getStats(): Promise<Stats> {
     users: Number(r.users ?? 0),
     savedTimetables: Number(r.saved ?? 0),
     activeWorking: Number(r.active_working ?? 0),
+  };
+}
+
+// ── 이벤트 로깅 (행동 통계) ───────────────────────────────
+export async function logEvent(
+  name: string, props: Record<string, unknown>, session: string | null, email: string | null,
+): Promise<void> {
+  if (!sql) return;
+  await ensureSchema();
+  await sql`
+    INSERT INTO events (name, props, session, email)
+    VALUES (${name}, ${JSON.stringify(props || {})}::jsonb, ${session}, ${email})
+  `;
+}
+
+export interface EventStats {
+  totalEvents: number;
+  uniqueSessions: number;
+  byName: { name: string; n: number }[];
+  topSearch: { q: string; n: number }[];
+  funnel: { visits: number; aiGenerate: number; logins: number; saves: number };
+}
+
+export async function getEventStats(): Promise<EventStats> {
+  const empty: EventStats = { totalEvents: 0, uniqueSessions: 0, byName: [], topSearch: [], funnel: { visits: 0, aiGenerate: 0, logins: 0, saves: 0 } };
+  if (!sql) return empty;
+  await ensureSchema();
+  const [totals, byName, topSearch] = await Promise.all([
+    sql`SELECT count(*)::int AS total, count(DISTINCT session)::int AS sessions FROM events`,
+    sql`SELECT name, count(*)::int AS n FROM events GROUP BY name ORDER BY n DESC LIMIT 20`,
+    sql`SELECT props->>'q' AS q, count(*)::int AS n FROM events
+        WHERE name = 'search' AND coalesce(props->>'q','') <> '' GROUP BY 1 ORDER BY n DESC LIMIT 10`,
+  ]);
+  const cnt = (nm: string) => Number((byName as { name: string; n: number }[]).find((x) => x.name === nm)?.n ?? 0);
+  return {
+    totalEvents: Number(totals[0]?.total ?? 0),
+    uniqueSessions: Number(totals[0]?.sessions ?? 0),
+    byName: (byName as { name: string; n: number }[]).map((x) => ({ name: x.name, n: Number(x.n) })),
+    topSearch: (topSearch as { q: string; n: number }[]).map((x) => ({ q: x.q, n: Number(x.n) })),
+    funnel: { visits: cnt("tool_view"), aiGenerate: cnt("ai_generate"), logins: cnt("login"), saves: cnt("save") },
   };
 }
