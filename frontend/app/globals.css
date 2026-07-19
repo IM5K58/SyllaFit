@@ -434,7 +434,15 @@ input:focus, textarea:focus, select:focus {
     -webkit-overflow-scrolling: touch;   /* iOS 관성 스크롤 */
   }
   .tabbar::-webkit-scrollbar { display: none; }  /* Chrome/Safari */
-  .tab { flex: none; padding: 9px 13px; font-size: 14px; }
+  .tab { flex: none; padding: 9px 13px; font-size: 14px; white-space: nowrap; }
+
+  /* 탭타겟 확대 — 손가락으로 누르기 편하게(≥38px). 목록의 추가/담기 버튼 포함. */
+  button.mini, .btn-mini { min-height: 38px; padding: 8px 13px; font-size: 12.5px; }
+  /* 앱바 정리 — 부가 정보(데이터 날짜·과목 수)는 숨겨 버튼 공간 확보. */
+  .appbar .muted { display: none; }
+
+  /* 시간표 칸 글씨 살짝 축소 — 좁은 컬럼에서도 덜 잘리게 */
+  .tt-cell-name { font-size: 10.5px !important; }
 
   /* 히어로 여백 축소 */
   .hero-full { padding: 32px 18px 52px; }

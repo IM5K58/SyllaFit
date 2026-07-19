@@ -105,13 +105,15 @@ export default function Timetable({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: `54px repeat(${days.length}, minmax(72px, 1fr))`,
+          // 컬럼을 유동(minmax(0,1fr))으로 → 좁은 화면(모바일)에서도 가로 스크롤 없이 월~금 다 보임.
+          gridTemplateColumns: `46px repeat(${days.length}, minmax(0, 1fr))`,
           gridTemplateRows: `24px repeat(${nRows}, ${ROW_H}px)`,
           border: "1px solid var(--border)",
           borderRadius: 8,
           overflow: "hidden",
           fontSize: 12,
-          minWidth: 54 + days.length * 72,
+          // 화면이 아주 좁아도 최소 가독 폭은 유지(그 이하로만 가로 스크롤).
+          minWidth: 46 + days.length * 44,
         }}
       >
         {/* 좌상단: '교시' 라벨 */}
@@ -203,7 +205,7 @@ export default function Timetable({
                   lineHeight: 1.2,
                 }}
               >
-                {it.name}
+                <span className="tt-cell-name">{it.name}</span>
                 {(it.prof || b.room) && (
                   <div style={{ fontWeight: 400, fontSize: 10, opacity: 0.9 }}>
                     {[it.prof, b.room].filter(Boolean).join(" · ")}
