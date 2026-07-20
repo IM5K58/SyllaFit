@@ -21,6 +21,16 @@ class Settings:
     # 캐시 blob 저장소(Neon Postgres). 저장소에 캐시가 없을 때 부팅 시 여기서 받아옴.
     database_url: str = os.getenv("DATABASE_URL", "")
 
+    # 학교생활 에이전트 — Naver 검색 API (developers.naver.com, 2026-07 발급 키)
+    naver_client_id: str = os.getenv("NAVER_CLIENT_ID", "")
+    naver_client_secret: str = os.getenv("NAVER_CLIENT_SECRET", "")
+    # 에이전트 호출 보호: 프론트(Next 서버)만 부르도록 공유 시크릿. 미설정 시 검사 안 함(로컬 개발).
+    agent_internal_key: str = os.getenv("AGENT_INTERNAL_KEY", "")
+
+    @property
+    def naver_ready(self) -> bool:
+        return bool(self.naver_client_id and self.naver_client_secret)
+
     _cache_env = os.getenv("CACHE_DIR")
     cache_dir: Path = (
         (BACKEND_DIR / _cache_env).resolve()

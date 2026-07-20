@@ -141,6 +141,7 @@ function eventLabel(name: string): string {
   const m: Record<string, string> = {
     tool_view: "도구 방문", tab: "탭 전환", search: "검색", ai_generate: "AI 시간표 생성",
     save: "시간표 저장", backup_generate: "실패대비 생성", login: "로그인", advise: "AI 검토",
+    agent_run: "에이전트 실행", agent_save: "플랜 저장",
   };
   return m[name] || name;
 }

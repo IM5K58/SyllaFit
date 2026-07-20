@@ -48,6 +48,29 @@ function ensureSchema(): Promise<void> {
       `;
       await s`CREATE INDEX IF NOT EXISTS events_name_idx ON events (name)`;
       await s`CREATE INDEX IF NOT EXISTS events_created_idx ON events (created_at)`;
+      await s`
+        CREATE TABLE IF NOT EXISTS agent_items (
+          id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+          email      text NOT NULL,
+          category   text NOT NULL,
+          title      text NOT NULL,
+          reason     text NOT NULL DEFAULT '',
+          url        text NOT NULL,
+          date_text  text,
+          status     text NOT NULL DEFAULT '예정',   -- 예정 | 진행 | 완료
+          memo       text NOT NULL DEFAULT '',
+          created_at timestamptz NOT NULL DEFAULT now()
+        )
+      `;
+      await s`CREATE INDEX IF NOT EXISTS agent_items_email_idx ON agent_items (email)`;
+      await s`
+        CREATE TABLE IF NOT EXISTS agent_state (
+          email      text PRIMARY KEY,
+          profile    jsonb NOT NULL DEFAULT '{}',   -- 마지막 입력 프로필 (재방문 프리필)
+          briefing   jsonb,                          -- 마지막 브리핑 결과 (세션 복원)
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `;
     })();
   }
   return ready;
@@ -80,6 +103,8 @@ export async function deleteUserAccount(email: string): Promise<void> {
   if (!sql) return;
   await ensureSchema();
   await sql`DELETE FROM user_data WHERE email = ${email}`;
+  await sql`DELETE FROM agent_items WHERE email = ${email}`;
+  await sql`DELETE FROM agent_state WHERE email = ${email}`;
   await sql`UPDATE events SET email = NULL WHERE email = ${email}`;
 }
 
@@ -150,6 +175,119 @@ export async function getStats(): Promise<Stats> {
     savedTimetables: Number(r.saved ?? 0),
     activeWorking: Number(r.active_working ?? 0),
   };
+}
+
+// ── 학교생활 에이전트: 내 플랜 ─────────────────────────────
+export interface AgentItem {
+  id: number; category: string; title: string; reason: string;
+  url: string; date_text: string | null; status: string; memo: string; created_at: string;
+}
+
+function normAgentItem(r: Record<string, unknown>): AgentItem {
+  const ca = r.created_at;
+  return {
+    id: Number(r.id),
+    category: String(r.category ?? ""),
+    title: String(r.title ?? ""),
+    reason: String(r.reason ?? ""),
+    url: String(r.url ?? ""),
+    date_text: r.date_text == null ? null : String(r.date_text),
+    status: String(r.status ?? "예정"),
+    memo: String(r.memo ?? ""),
+    created_at: ca instanceof Date ? ca.toISOString() : String(ca ?? ""),
+  };
+}
+
+export async function listAgentItems(email: string): Promise<AgentItem[]> {
+  if (!sql) return [];
+  await ensureSchema();
+  const rows = await sql`SELECT * FROM agent_items WHERE email = ${email} ORDER BY created_at DESC LIMIT 200`;
+  return rows.map(normAgentItem);
+}
+
+export async function addAgentItems(
+  email: string,
+  items: { category: string; title: string; reason: string; url: string; date_text: string | null }[],
+): Promise<void> {
+  if (!sql || !items.length) return;
+  await ensureSchema();
+  for (const it of items.slice(0, 20)) {
+    // 같은 URL을 이미 저장했으면 중복 저장 안 함
+    await sql`
+      INSERT INTO agent_items (email, category, title, reason, url, date_text)
+      SELECT ${email}, ${it.category}, ${it.title}, ${it.reason}, ${it.url}, ${it.date_text}
+      WHERE NOT EXISTS (SELECT 1 FROM agent_items WHERE email = ${email} AND url = ${it.url})
+    `;
+  }
+}
+
+export async function updateAgentItem(
+  email: string, id: number, patch: { status?: string; memo?: string },
+): Promise<void> {
+  if (!sql) return;
+  await ensureSchema();
+  if (patch.status !== undefined)
+    await sql`UPDATE agent_items SET status = ${patch.status} WHERE id = ${id} AND email = ${email}`;
+  if (patch.memo !== undefined)
+    await sql`UPDATE agent_items SET memo = ${patch.memo} WHERE id = ${id} AND email = ${email}`;
+}
+
+export async function deleteAgentItem(email: string, id: number): Promise<void> {
+  if (!sql) return;
+  await ensureSchema();
+  await sql`DELETE FROM agent_items WHERE id = ${id} AND email = ${email}`;
+}
+
+// ── 에이전트 세션 상태 (마지막 브리핑·프로필 보존) ─────────────
+export interface AgentState {
+  profile: Record<string, unknown>;
+  briefing: Record<string, unknown> | null;
+  updated_at: string;
+}
+
+export async function getAgentState(email: string): Promise<AgentState | null> {
+  if (!sql) return null;
+  await ensureSchema();
+  const rows = await sql`SELECT profile, briefing, updated_at FROM agent_state WHERE email = ${email}`;
+  if (!rows.length) return null;
+  const r = rows[0];
+  const ua = r.updated_at;
+  return {
+    profile: r.profile && typeof r.profile === "object" ? r.profile : {},
+    briefing: r.briefing && typeof r.briefing === "object" ? r.briefing : null,
+    updated_at: ua instanceof Date ? ua.toISOString() : String(ua ?? ""),
+  };
+}
+
+export async function putAgentState(
+  email: string, profile: Record<string, unknown>, briefing: Record<string, unknown> | null,
+): Promise<void> {
+  if (!sql) return;
+  await ensureSchema();
+  await sql`
+    INSERT INTO agent_state (email, profile, briefing, updated_at)
+    VALUES (${email}, ${JSON.stringify(profile)}::jsonb, ${briefing ? JSON.stringify(briefing) : null}::jsonb, now())
+    ON CONFLICT (email) DO UPDATE
+      SET profile = EXCLUDED.profile, briefing = EXCLUDED.briefing, updated_at = now()
+  `;
+}
+
+export async function clearAgentBriefing(email: string): Promise<void> {
+  if (!sql) return;
+  await ensureSchema();
+  await sql`UPDATE agent_state SET briefing = NULL, updated_at = now() WHERE email = ${email}`;
+}
+
+// 오늘(UTC 아닌 KST 기준) 특정 이벤트를 이 사용자가 몇 번 했나 — 일일 실행 제한용
+export async function countTodayEvents(name: string, email: string): Promise<number> {
+  if (!sql) return 0;
+  await ensureSchema();
+  const rows = await sql`
+    SELECT count(*)::int AS n FROM events
+    WHERE name = ${name} AND email = ${email}
+      AND created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul'
+  `;
+  return Number(rows[0]?.n ?? 0);
 }
 
 // ── 이벤트 로깅 (행동 통계) ───────────────────────────────

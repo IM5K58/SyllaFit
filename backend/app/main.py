@@ -5,12 +5,12 @@
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
-from . import advise, alpha, backup, beta, cache_store, gamma, qa, scheduling
+from . import advise, agent, alpha, backup, beta, cache_store, gamma, naver_search, qa, scheduling
 from .cache_bootstrap import ensure_cache
 from .config import settings
 from .solar import SolarError
@@ -82,6 +82,33 @@ def extract_syllabi(req: ExtractRequest):
         except SolarError as e:
             raise HTTPException(503, f"Solar 오류: {e}")
     return {"extracted": out}
+
+
+class AgentPlanRequest(BaseModel):
+    profile: dict          # {major, grade, goal}
+    timetable_summary: str = ""
+
+
+@app.post("/agent/plan")
+def agent_plan(req: AgentPlanRequest, x_internal_key: str | None = Header(default=None)):
+    """학교생활 에이전트 — 프로필+시간표 → 웹검색 브리핑.
+
+    로그인·일일제한은 프론트(Next 서버 라우트)가 담당. 이 엔드포인트는
+    AGENT_INTERNAL_KEY 가 설정돼 있으면 그 키를 아는 호출만 허용(직접 호출 차단).
+    """
+    if settings.agent_internal_key and x_internal_key != settings.agent_internal_key:
+        raise HTTPException(403, "forbidden")
+    goal = str(req.profile.get("goal", ""))[:500]
+    if not goal.strip():
+        raise HTTPException(400, "목표·관심사를 입력해 주세요.")
+    profile = {"major": str(req.profile.get("major", ""))[:50],
+               "grade": str(req.profile.get("grade", ""))[:20], "goal": goal}
+    try:
+        return agent.run_agent(profile, req.timetable_summary[:300])
+    except naver_search.NaverSearchError as e:
+        raise HTTPException(503, f"검색 오류: {e}")
+    except SolarError as e:
+        raise HTTPException(503, f"Solar 오류: {e}")
 
 
 class AdviseRequest(BaseModel):

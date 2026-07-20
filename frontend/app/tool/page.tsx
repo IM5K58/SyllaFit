@@ -127,6 +127,10 @@ function ToolInner() {
               <span>🐛</span>
               <span>버그 제보</span>
             </button>
+            <span className="beta-wrap">
+              <Link href="/schoolagent"><button className="mini">🎓 학교생활 에이전트</button></Link>
+              <span className="beta-badge">Beta</span>
+            </span>
             <ThemeToggle />
             <AuthButton />
           </div>
@@ -231,6 +235,26 @@ function MyPage({
   const { my, setMy, library: saved, saveToLibrary, removeFromLibrary, cloudEnabled } = useTimetables();
   const [saveName, setSaveName] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  // 학교생활 에이전트 '내 플랜' 요약 (로그인 시에만 값이 옴 — 비로그인 401은 조용히 무시)
+  const [planItems, setPlanItems] = useState<
+    { id: number; category: string; title: string; url: string; date_text: string | null; status: string }[] | null
+  >(null);
+
+  useEffect(() => {
+    fetch("/api/agent-items")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.items) setPlanItems(d.items); })
+      .catch(() => {});
+  }, []);
+
+  async function patchPlanStatus(id: number, status: string) {
+    setPlanItems((prev) => prev?.map((p) => (p.id === id ? { ...p, status } : p)) ?? null);
+    await fetch("/api/agent-items", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    }).catch(() => {});
+  }
 
   function saveCurrent() {
     if (my.length === 0) { setNotice("저장할 과목이 없어요. 먼저 시간표를 짜 주세요."); return; }
@@ -322,9 +346,47 @@ function MyPage({
         )}
       </div>
 
+      {/* 내 플랜 (학교생활 에이전트) — 로그인 시에만 표시 */}
+      {planItems !== null && (
+        <div className="panel">
+          <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <div className="h-sec" style={{ margin: 0 }}><span className="step">3</span>내 플랜</div>
+            <Link href="/schoolagent"><button className="mini">학교생활 에이전트에서 관리 →</button></Link>
+          </div>
+          {planItems.length === 0 ? (
+            <p className="muted" style={{ marginTop: 10 }}>
+              아직 저장한 플랜이 없어요. 학교생활 에이전트가 공모전·자격증·행사를 찾아드려요.
+            </p>
+          ) : (
+            <div style={{ marginTop: 10 }}>
+              {planItems.slice(0, 8).map((p) => (
+                <div key={p.id} className="row"
+                  style={{ justifyContent: "space-between", gap: 8, padding: "7px 0", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
+                  <span style={{ flex: 1, minWidth: 180 }}>
+                    <span className="tag" style={{ marginRight: 6 }}>{p.category}</span>
+                    <a href={p.url} target="_blank" rel="noopener noreferrer"
+                       style={{ color: "var(--text)", fontWeight: 650 }}>{p.title}</a>
+                    {p.date_text && <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>⏰ {p.date_text}</span>}
+                  </span>
+                  <select value={p.status} onChange={(e) => patchPlanStatus(p.id, e.target.value)}
+                    style={{ width: 84, padding: "4px 6px", fontSize: 12.5 }}>
+                    <option>예정</option><option>진행</option><option>완료</option>
+                  </select>
+                </div>
+              ))}
+              {planItems.length > 8 && (
+                <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+                  외 {planItems.length - 8}개 — 전체는 에이전트 페이지에서
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 설정 */}
       <div className="panel">
-        <div className="h-sec"><span className="step">3</span>설정</div>
+        <div className="h-sec"><span className="step">{planItems !== null ? 4 : 3}</span>설정</div>
         <AccountSettings />
       </div>
 

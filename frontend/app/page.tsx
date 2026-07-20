@@ -30,6 +30,10 @@ export default function Home() {
           <span className="brand">Sylla<span className="dot">Fit</span></span>
           <div className="row" style={{ gap: 8 }}>
             <Link href="/tool"><button className="mini">도구 열기 →</button></Link>
+            <span className="beta-wrap">
+              <Link href="/schoolagent"><button className="mini">🎓 에이전트</button></Link>
+              <span className="beta-badge">Beta</span>
+            </span>
             <a
               href="https://docs.google.com/forms/d/e/1FAIpQLSeEpALFqGfRP3uSEb2qdenZVvWHwVqVZZDIihazbzbfWCsxTA/viewform?usp=publish-editor"
               target="_blank"

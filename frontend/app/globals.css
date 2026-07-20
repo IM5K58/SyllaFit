@@ -158,6 +158,16 @@ input:not([type="checkbox"]):not([type="radio"]), textarea, select {
 input[type="checkbox"], input[type="radio"] {
   width: 18px; height: 18px; flex: none; accent-color: var(--accent); cursor: pointer;
 }
+/* select: 브라우저 기본 화살표/높이 제각각 → input과 통일 (커스텀 셰브론) */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' fill='none' stroke='%238b95a1' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 34px;
+  cursor: pointer;
+}
 input::placeholder, textarea::placeholder { color: var(--muted); }
 input:focus, textarea:focus, select:focus {
   outline: none;
@@ -364,6 +374,16 @@ input:focus, textarea:focus, select:focus {
   cursor: pointer; font-size: 13px; padding: 2px 4px;
 }
 .notice-x:hover { color: var(--text); }
+
+/* Beta 플로팅 배지 — 버튼 우하단에 살짝 겹쳐 뜨는 라벨 */
+.beta-wrap { position: relative; display: inline-flex; }
+.beta-badge {
+  position: absolute; right: -6px; bottom: -7px; z-index: 2;
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.02em; line-height: 1;
+  padding: 3px 6px; border-radius: 99px;
+  background: var(--accent); color: #fff;
+  pointer-events: none;
+}
 
 /* 로그인 아바타 + 계정 메뉴 */
 .avatar-btn {
