@@ -33,6 +33,8 @@ def chat_json(system: str, user: str, *, temperature: float = 0.0,
         "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
+    if settings.solar_reasoning_effort:  # 추론 모델(solar-open2 등)만 필요 — 빈 값이면 미전송
+        payload["reasoning_effort"] = settings.solar_reasoning_effort
     headers = {"Authorization": f"Bearer {settings.solar_api_key}"}
 
     try:

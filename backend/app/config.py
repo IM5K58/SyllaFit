@@ -14,6 +14,9 @@ class Settings:
     solar_api_key: str = os.getenv("SOLAR_API_KEY", "")
     solar_base_url: str = os.getenv("SOLAR_BASE_URL", "https://api.upstage.ai/v1")
     solar_model: str = os.getenv("SOLAR_MODEL", "solar-pro3")
+    # 추론(reasoning) 모델용 생각 깊이. solar-open2는 기본값이 생각을 길게 해
+    # 20~55초가 걸리므로 "minimal"로 꺼야 실용 속도(~2초, 실측). 빈 값이면 미전송.
+    solar_reasoning_effort: str = os.getenv("SOLAR_REASONING_EFFORT", "")
 
     # 캐시 blob 저장소(Neon Postgres). 저장소에 캐시가 없을 때 부팅 시 여기서 받아옴.
     database_url: str = os.getenv("DATABASE_URL", "")
