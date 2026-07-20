@@ -22,6 +22,7 @@ import Timetable from "../components/Timetable";
 import ThemeToggle from "../components/ThemeToggle";
 import AuthButton from "../components/AuthButton";
 import NoticeBanner from "../components/NoticeBanner";
+import AccountSettings from "../components/AccountSettings";
 import { downloadTimetableImage } from "../lib/timetableImage";
 import { TimetableProvider, useTimetables, SavedTT } from "../lib/timetableStore";
 import { logEvent } from "../lib/analytics";
@@ -319,6 +320,12 @@ function MyPage({
             </div>
           ))
         )}
+      </div>
+
+      {/* 설정 */}
+      <div className="panel">
+        <div className="h-sec"><span className="step">3</span>설정</div>
+        <AccountSettings />
       </div>
 
       <div className="panel inset">

@@ -75,6 +75,14 @@ export async function putUserData(email: string, data: UserData): Promise<void> 
   `;
 }
 
+// 회원 탈퇴 — 저장 데이터 삭제 + 이벤트의 개인식별(email) 제거(익명 집계는 유지).
+export async function deleteUserAccount(email: string): Promise<void> {
+  if (!sql) return;
+  await ensureSchema();
+  await sql`DELETE FROM user_data WHERE email = ${email}`;
+  await sql`UPDATE events SET email = NULL WHERE email = ${email}`;
+}
+
 // ── 공지사항 ──────────────────────────────────────────────
 export interface Notice { id: number; body: string; level: string; active: boolean; created_at: string; }
 
