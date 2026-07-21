@@ -30,19 +30,31 @@ export async function POST(req: Request) {
   const profile = body?.profile && typeof body.profile === "object" ? body.profile : {};
   const timetable_summary = typeof body?.timetable_summary === "string" ? body.timetable_summary : "";
 
-  let r: Response;
-  try {
-    r = await fetch(`${BACKEND}/agent/plan`, {
+  // Render 무료 플랜은 재시작·콜드스타트 중 연결이 튕길 수 있어 1회 재시도 (총 예산 ~105초)
+  async function callBackend(timeoutMs: number): Promise<Response> {
+    return fetch(`${BACKEND}/agent/plan`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...(process.env.AGENT_INTERNAL_KEY ? { "X-Internal-Key": process.env.AGENT_INTERNAL_KEY } : {}),
       },
       body: JSON.stringify({ profile, timetable_summary }),
-      signal: AbortSignal.timeout(110_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
+  }
+  let r: Response;
+  try {
+    r = await callBackend(95_000);
   } catch {
-    return NextResponse.json({ error: "backend_unreachable", message: "에이전트 서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요." }, { status: 502 });
+    try {
+      await new Promise((res) => setTimeout(res, 3_000));
+      r = await callBackend(90_000);
+    } catch {
+      return NextResponse.json(
+        { error: "backend_unreachable", message: "에이전트 서버가 잠에서 깨는 중일 수 있어요. 30초 뒤 다시 실행해 주세요." },
+        { status: 502 },
+      );
+    }
   }
 
   const data = await r.json().catch(() => ({}));

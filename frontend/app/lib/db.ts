@@ -290,6 +290,61 @@ export async function countTodayEvents(name: string, email: string): Promise<num
   return Number(rows[0]?.n ?? 0);
 }
 
+// ── 학교생활 에이전트 관리자 통계 ──────────────────────────
+export interface AgentAdminStats {
+  runs: number;              // 총 실행
+  runUsers: number;          // 실행한 고유 사용자
+  saveUsers: number;         // 저장까지 간 고유 사용자 (전환율 분자)
+  avgItems: number;          // 실행당 평균 추천 항목 수
+  emptyRuns: number;         // 추천 0개로 끝난 실행 (검색 실패 신호)
+  savedTotal: number;        // 저장된 플랜 항목 총수
+  planUsers: number;         // 플랜 보유 사용자
+  categories: { name: string; n: number }[];
+  statuses: { name: string; n: number }[];
+  majors: { name: string; n: number }[];
+  grades: { name: string; n: number }[];
+}
+
+export async function getAgentAdminStats(): Promise<AgentAdminStats> {
+  const empty: AgentAdminStats = {
+    runs: 0, runUsers: 0, saveUsers: 0, avgItems: 0, emptyRuns: 0,
+    savedTotal: 0, planUsers: 0, categories: [], statuses: [], majors: [], grades: [],
+  };
+  if (!sql) return empty;
+  await ensureSchema();
+  const [runs, savers, items, planUsersQ, statuses, profiles, grades] = await Promise.all([
+    sql`SELECT count(*)::int AS runs,
+               count(DISTINCT email)::int AS users,
+               coalesce(avg(NULLIF(props->>'items', '')::int), 0)::float AS avg_items,
+               (count(*) FILTER (WHERE coalesce((props->>'items')::int, 0) = 0))::int AS empty_runs
+        FROM events WHERE name = 'agent_run'`,
+    sql`SELECT count(DISTINCT email)::int AS n FROM events WHERE name = 'agent_save' AND email IS NOT NULL`,
+    sql`SELECT category, count(*)::int AS n FROM agent_items GROUP BY category ORDER BY n DESC`,
+    sql`SELECT count(DISTINCT email)::int AS n FROM agent_items`,
+    sql`SELECT status, count(*)::int AS n FROM agent_items GROUP BY status`,
+    sql`SELECT profile->>'major' AS name, count(*)::int AS n FROM agent_state
+        WHERE coalesce(profile->>'major', '') <> '' GROUP BY 1 ORDER BY n DESC LIMIT 8`,
+    sql`SELECT profile->>'grade' AS name, count(*)::int AS n FROM agent_state
+        WHERE coalesce(profile->>'grade', '') <> '' GROUP BY 1 ORDER BY n DESC`,
+  ]);
+  const r = runs[0] || {};
+  const savedTotal = (items as { n: number }[]).reduce((a, x) => a + Number(x.n), 0);
+  const planUsers = Number(planUsersQ[0]?.n ?? 0);
+  return {
+    runs: Number(r.runs ?? 0),
+    runUsers: Number(r.users ?? 0),
+    saveUsers: Number(savers[0]?.n ?? 0),
+    avgItems: Math.round(Number(r.avg_items ?? 0) * 10) / 10,
+    emptyRuns: Number(r.empty_runs ?? 0),
+    savedTotal,
+    planUsers,
+    categories: (items as { category: string; n: number }[]).map((x) => ({ name: x.category, n: Number(x.n) })),
+    statuses: (statuses as { status: string; n: number }[]).map((x) => ({ name: x.status, n: Number(x.n) })),
+    majors: (profiles as { name: string; n: number }[]).map((x) => ({ name: x.name, n: Number(x.n) })),
+    grades: (grades as { name: string; n: number }[]).map((x) => ({ name: x.name, n: Number(x.n) })),
+  };
+}
+
 // ── 이벤트 로깅 (행동 통계) ───────────────────────────────
 export async function logEvent(
   name: string, props: Record<string, unknown>, session: string | null, email: string | null,
@@ -302,7 +357,7 @@ export async function logEvent(
   `;
 }
 
-export interface DailyPoint { day: string; visits: number; ai: number; saves: number; sessions: number; }
+export interface DailyPoint { day: string; visits: number; ai: number; saves: number; sessions: number; agent: number; }
 export interface EventStats {
   totalEvents: number;
   uniqueSessions: number;
@@ -332,6 +387,7 @@ export async function getEventStats(): Promise<EventStats> {
           count(*) FILTER (WHERE name = 'tool_view')::int AS visits,
           count(*) FILTER (WHERE name = 'ai_generate')::int AS ai,
           count(*) FILTER (WHERE name = 'save')::int AS saves,
+          count(*) FILTER (WHERE name = 'agent_run')::int AS agent,
           count(DISTINCT session)::int AS sessions
         FROM events
         WHERE created_at >= now() - interval '14 days'
@@ -352,7 +408,8 @@ export async function getEventStats(): Promise<EventStats> {
     topSearch: (topSearch as { q: string; n: number }[]).map((x) => ({ q: x.q, n: Number(x.n) })),
     funnel: { visits: cnt("tool_view"), aiGenerate: cnt("ai_generate"), logins: cnt("login"), saves: cnt("save") },
     daily: (daily as Record<string, unknown>[]).map((d) => ({
-      day: String(d.day), visits: Number(d.visits), ai: Number(d.ai), saves: Number(d.saves), sessions: Number(d.sessions),
+      day: String(d.day), visits: Number(d.visits), ai: Number(d.ai), saves: Number(d.saves),
+      sessions: Number(d.sessions), agent: Number(d.agent ?? 0),
     })),
     retention: { totalSessions: Number(retention[0]?.total ?? 0), returningSessions: Number(retention[0]?.returning ?? 0) },
   };

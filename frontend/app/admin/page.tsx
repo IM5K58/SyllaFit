@@ -2,7 +2,10 @@
 import Link from "next/link";
 import { auth } from "@/auth";
 import { isAdminEmail } from "@/app/lib/admin";
-import { dbEnabled, getStats, getAllNotices, getEventStats, type EventStats } from "@/app/lib/db";
+import {
+  dbEnabled, getStats, getAllNotices, getEventStats, getAgentAdminStats,
+  type EventStats, type AgentAdminStats,
+} from "@/app/lib/db";
 import AdminNotices from "../components/AdminNotices";
 
 export const dynamic = "force-dynamic"; // 세션·DB 실시간 조회
@@ -30,10 +33,13 @@ export default async function AdminPage() {
   let stats = null;
   let notices: Awaited<ReturnType<typeof getAllNotices>> = [];
   let events: EventStats | null = null;
+  let agentStats: AgentAdminStats | null = null;
   let dbError: string | null = null;
   if (dbEnabled) {
     try {
-      [stats, notices, events] = await Promise.all([getStats(), getAllNotices(), getEventStats()]);
+      [stats, notices, events, agentStats] = await Promise.all([
+        getStats(), getAllNotices(), getEventStats(), getAgentAdminStats(),
+      ]);
     } catch (e) {
       dbError = String(e);
     }
@@ -124,9 +130,42 @@ export default async function AdminPage() {
         )}
       </div>
 
+      {/* 학교생활 에이전트 통계 */}
+      <div className="panel">
+        <div className="h-sec"><span className="step">3</span>학교생활 에이전트</div>
+        {!agentStats || agentStats.runs === 0 ? (
+          <p className="muted">아직 실행 기록이 없어요. 사용자가 에이전트를 쓰면 여기 쌓여요.</p>
+        ) : (
+          <>
+            {/* 규모 + 전환 */}
+            <div className="row" style={{ gap: 20, flexWrap: "wrap", marginBottom: 6 }}>
+              <Stat label="총 실행" value={agentStats.runs} />
+              <Stat label="실행 사용자" value={agentStats.runUsers} />
+              <RateStat label="실행→저장 전환율"
+                num={agentStats.saveUsers} den={agentStats.runUsers} />
+              <Stat label="저장된 플랜" value={agentStats.savedTotal} />
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
+              실행당 평균 추천 {agentStats.avgItems}개
+              {" · 빈 결과 실행 "}{agentStats.emptyRuns}회
+              {agentStats.runs > 0 && ` (${Math.round((agentStats.emptyRuns / agentStats.runs) * 100)}% — 오르면 검색 프롬프트 점검)`}
+              {agentStats.planUsers > 0 &&
+                ` · 플랜 보유 ${agentStats.planUsers}명 (인당 평균 ${Math.round((agentStats.savedTotal / agentStats.planUsers) * 10) / 10}개)`}
+            </div>
+
+            <div className="row" style={{ gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <CountList title="저장 카테고리 분포" rows={agentStats.categories} total={agentStats.savedTotal} />
+              <CountList title="플랜 상태" rows={agentStats.statuses} total={agentStats.savedTotal} />
+              <CountList title="학과 TOP" rows={agentStats.majors} />
+              <CountList title="학년 분포" rows={agentStats.grades} />
+            </div>
+          </>
+        )}
+      </div>
+
       {/* 공지 관리 */}
       <div className="panel">
-        <div className="h-sec"><span className="step">3</span>공지사항 관리</div>
+        <div className="h-sec"><span className="step">4</span>공지사항 관리</div>
         {!dbEnabled ? (
           <p className="muted">DATABASE_URL 을 설정하면 공지를 등록할 수 있어요.</p>
         ) : (
@@ -146,6 +185,35 @@ function eventLabel(name: string): string {
   return m[name] || name;
 }
 
+function RateStat({ label, num, den }: { label: string; num: number; den: number }) {
+  const rate = den > 0 ? Math.round((num / den) * 100) : 0;
+  return (
+    <div>
+      <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--accent)" }}>{rate}%</div>
+      <div className="muted" style={{ fontSize: 13 }}>{label} ({num}/{den})</div>
+    </div>
+  );
+}
+
+function CountList({ title, rows, total }: { title: string; rows: { name: string; n: number }[]; total?: number }) {
+  return (
+    <div style={{ flex: "1 1 180px", minWidth: 160 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{title}</div>
+      {rows.length === 0 ? (
+        <p className="muted" style={{ fontSize: 13 }}>아직 없어요.</p>
+      ) : rows.map((r) => (
+        <div key={r.name} className="row" style={{ justifyContent: "space-between", padding: "3px 0", fontSize: 13 }}>
+          <span className="muted">{r.name}</span>
+          <b>
+            {r.n.toLocaleString()}
+            {total && total > 0 ? <span className="muted" style={{ fontWeight: 400 }}> ({Math.round((r.n / total) * 100)}%)</span> : null}
+          </b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RetentionStat({ total, returning }: { total: number; returning: number }) {
   const rate = total > 0 ? Math.round((returning / total) * 100) : 0;
   return (
@@ -157,7 +225,7 @@ function RetentionStat({ total, returning }: { total: number; returning: number 
 }
 
 // 날짜별 방문 막대 + 세션 수(작은 라벨). 차트 라이브러리 없이 CSS 막대.
-function DailyChart({ data }: { data: { day: string; visits: number; ai: number; saves: number; sessions: number }[] }) {
+function DailyChart({ data }: { data: { day: string; visits: number; ai: number; saves: number; sessions: number; agent: number }[] }) {
   const max = Math.max(1, ...data.map((d) => d.visits));
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 130, overflowX: "auto", paddingBottom: 2 }}>
@@ -165,7 +233,7 @@ function DailyChart({ data }: { data: { day: string; visits: number; ai: number;
         <div key={d.day} style={{ flex: "1 0 34px", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 10.5, fontWeight: 700 }}>{d.visits}</span>
           <div
-            title={`${d.day} · 방문 ${d.visits} · AI ${d.ai} · 저장 ${d.saves} · 세션 ${d.sessions}`}
+            title={`${d.day} · 방문 ${d.visits} · AI ${d.ai} · 저장 ${d.saves} · 에이전트 ${d.agent} · 세션 ${d.sessions}`}
             style={{
               width: "100%", maxWidth: 26,
               height: `${Math.round((d.visits / max) * 96)}px`,
