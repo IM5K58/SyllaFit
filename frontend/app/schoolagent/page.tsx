@@ -13,6 +13,7 @@ import { logEvent } from "../lib/analytics";
 interface AgentResultItem {
   category: string; title: string; reason: string;
   url: string; source_title: string; date_text: string | null;
+  verified?: boolean;   // 제목·일정이 출처 스니펫과 일치하는지 Solar가 대조 확인
 }
 interface AgentResult { summary: string; items: AgentResultItem[]; queries: string[]; runs_left: number | null; restored_at?: string; }
 interface PlanItem {
@@ -60,17 +61,49 @@ export default function SchoolAgentPage() {
   );
 }
 
+// 게이트 미리보기용 예시 카드 — 실제 추천이 아님을 '예시' 배지로 명확히 표시(가짜 링크 없음).
+const GATE_SAMPLES: { category: string; title: string; reason: string }[] = [
+  { category: "공모전", title: "2026 교내 SW·AI 해커톤", reason: "1~2학년도 참가 가능 · 팀 프로젝트 경험과 포트폴리오에 좋아요." },
+  { category: "자격증", title: "정보처리기사 (필기·실기)", reason: "SW 전공 취업 기본 스펙 · 학년에 맞춘 접수 일정을 함께 찾아드려요." },
+  { category: "행사·특강", title: "현직자 커리어 토크 / 취업 특강", reason: "3~4학년이라면 이력서·면접 준비에 바로 도움이 돼요." },
+];
+
 function LoginGate() {
   return (
-    <div className="panel" style={{ textAlign: "center", padding: "48px 20px" }}>
-      <div style={{ fontSize: 32, marginBottom: 10 }}>🔒</div>
-      <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>로그인하면 사용할 수 있어요</div>
-      <p className="muted" style={{ marginBottom: 18 }}>
-        맞춤 추천과 내 플랜 저장을 위해 인하대 계정(@inha.edu)으로 로그인해 주세요.
-      </p>
-      <button className="primary" onClick={() => signIn("google", { callbackUrl: "/schoolagent" })}>
-        Google로 로그인
-      </button>
+    <div className="panel" style={{ padding: "28px 20px" }}>
+      <div style={{ textAlign: "center", marginBottom: 20 }}>
+        <div style={{ fontSize: 30, marginBottom: 8 }}>🎓</div>
+        <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>학과·학년·목표만 알려주면, 웹을 뒤져 이렇게 정리해 드려요</div>
+        <p className="muted" style={{ marginBottom: 16 }}>
+          아래는 예시예요. 로그인하면 <b>내 프로필에 맞춘 실제 추천</b>과 출처 링크를 받고, 마음에 드는 항목은 <b>내 플랜</b>에 저장할 수 있어요.
+        </p>
+        <button className="primary" onClick={() => signIn("google", { callbackUrl: "/schoolagent" })}>
+          인하대 계정(@inha.edu)으로 로그인
+        </button>
+      </div>
+
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
+          이런 브리핑을 받아요 · 예시
+        </div>
+        <div style={{ opacity: 0.85 }}>
+          {GATE_SAMPLES.map((s) => (
+            <div key={s.title} style={{ border: "1px dashed var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
+              <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <b style={{ fontSize: 14 }}>
+                  <span className="tag" style={{ marginRight: 6 }}>{s.category}</span>
+                  {s.title}
+                </b>
+                <span className="badge eval">예시</span>
+              </div>
+              <div className="reason" style={{ margin: "4px 0 0" }}>{s.reason}</div>
+            </div>
+          ))}
+        </div>
+        <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+          실제 브리핑은 지금 열려 있는 공모전·행사·자격증을 웹에서 찾아 출처 링크와 함께 보여드려요.
+        </p>
+      </div>
     </div>
   );
 }
@@ -338,7 +371,7 @@ function AgentBody() {
             <p style={{ margin: "10px 0 6px", lineHeight: 1.7, fontSize: 14.5 }}>{result.summary}</p>
           )}
           <p className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
-            검색 {result.queries.length}회 기반 · 모든 항목은 출처 링크에서 최종 확인하세요.
+            검색 {result.queries.length}회 기반 · <b style={{ color: "var(--good)" }}>✓ 출처 확인됨</b>은 제목·일정이 출처와 일치하는지 Solar가 한 번 더 대조한 항목이에요. 최종 신청 전 출처 링크를 확인하세요.
           </p>
 
           {result.items.length === 0 && (
@@ -352,11 +385,15 @@ function AgentBody() {
                 <div key={it.url + it.title} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
                   <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                     <b style={{ fontSize: 14 }}>{it.title}</b>
-                    {it.date_text && (
-                      <span className="badge assign" title="출처에 적힌 일정 — 반드시 원문에서 확인하세요">
+                    {it.verified ? (
+                      <span className="badge ok" title="제목·일정이 출처 내용과 일치하는지 Solar가 대조 확인했어요">
+                        {it.date_text ? `${it.date_text} · ` : ""}✓ 출처 확인됨
+                      </span>
+                    ) : it.date_text ? (
+                      <span className="badge team" title="출처에 적힌 일정 — 반드시 원문에서 확인하세요">
                         {it.date_text} · 출처 확인
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <div className="reason" style={{ margin: "4px 0 6px" }}>{it.reason}</div>
                   <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>

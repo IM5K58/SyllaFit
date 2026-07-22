@@ -41,7 +41,7 @@ export default function Home() {
               className="btn-mini"
             >
               <span>🐛</span>
-              <span>버그 제보</span>
+              <span className="label-full">버그 제보</span>
             </a>
             <ThemeToggle />
             <AuthButton />

@@ -125,10 +125,10 @@ function ToolInner() {
               style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
             >
               <span>🐛</span>
-              <span>버그 제보</span>
+              <span className="label-full">버그 제보</span>
             </button>
             <span className="beta-wrap">
-              <Link href="/schoolagent"><button className="mini">🎓 학교생활 에이전트</button></Link>
+              <Link href="/schoolagent"><button className="mini">🎓 <span className="label-full">학교생활 </span>에이전트</button></Link>
               <span className="beta-badge">Beta</span>
             </span>
             <ThemeToggle />
@@ -221,6 +221,11 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, "");
 }
 
+// 저장 안내 접미사 — 비로그인이면 '임시 저장'임을 그 순간 알려 로그인 유도.
+function saveSuffix(cloudEnabled: boolean): string {
+  return cloudEnabled ? "" : " (임시 저장 — 로그인하면 계정에 영구 저장돼요)";
+}
+
 
 // ── 마이페이지: 내 시간표 + 보관함 ──
 function MyPage({
@@ -260,7 +265,7 @@ function MyPage({
     if (my.length === 0) { setNotice("저장할 과목이 없어요. 먼저 시간표를 짜 주세요."); return; }
     const name = saveToLibrary(saveName.trim() || `시간표 ${saved.length + 1}`, my);
     setSaveName("");
-    setNotice(`“${name}”으로 보관함에 저장했어요.`);
+    setNotice(`“${name}”으로 보관함에 저장했어요.${saveSuffix(cloudEnabled)}`);
   }
 
   function loadSaved(s: SavedTT) {
@@ -423,7 +428,7 @@ function BackupPage({
   seed: string[] | null;
   loadIntoBuilder: (keys: string[]) => void;
 }) {
-  const { my, library, saveToLibrary } = useTimetables();
+  const { my, library, saveToLibrary, cloudEnabled } = useTimetables();
   const [source, setSource] = useState<string[]>([]);
   const [risky, setRisky] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -462,7 +467,7 @@ function BackupPage({
 
   function saveBackup(b: BackupItem) {
     const name = saveToLibrary("대비 시간표", b.courses);
-    setSavedMsg(`“${name}”을 마이페이지 보관함에 저장했어요.`);
+    setSavedMsg(`“${name}”을 마이페이지 보관함에 저장했어요.${saveSuffix(cloudEnabled)}`);
   }
 
   const credits = source.reduce((a, k) => a + (courseByKey[k]?.credit || 0), 0);
@@ -918,7 +923,7 @@ function AiPlanner({
   loadIntoBuilder: (keys: string[]) => void;
   goBackup: (keys: string[]) => void;
 }) {
-  const { saveToLibrary } = useTimetables();
+  const { saveToLibrary, cloudEnabled } = useTimetables();
   const [search, setSearch] = useState("");
   useEffect(() => {
     const q = search.trim();
