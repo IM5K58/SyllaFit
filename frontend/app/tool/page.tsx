@@ -47,6 +47,7 @@ function ToolInner() {
   const [solarReady, setSolarReady] = useState<boolean | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [coursesLoaded, setCoursesLoaded] = useState(false);
 
   const [tab, setTab] = useState<"ai" | "manual" | "backup" | "my">("ai");
   const [details, setDetails] = useState<Record<string, Detail>>({});
@@ -87,7 +88,8 @@ function ToolInner() {
       .catch(() => setSolarReady(false));
     getCourses()
       .then((r) => setCourses(r.courses))
-      .catch((e) => setLoadErr(String(e)));
+      .catch((e) => setLoadErr(String(e)))
+      .finally(() => setCoursesLoaded(true));
   }, []);
 
   const courseByKey = useMemo(() => {
@@ -164,7 +166,18 @@ function ToolInner() {
         </div>
       )}
 
-      {tab === "ai" && (
+      {/* 과목 로딩 중 — 빈 화면 대신 스켈레톤(갑툭튀 방지). 로드/실패 시 finally로 해제. */}
+      {!coursesLoaded && !loadErr && (
+        <div className="panel" aria-busy="true" aria-label="과목 데이터를 불러오는 중">
+          <div className="muted" style={{ marginBottom: 12, fontSize: 13 }}>과목 데이터를 불러오는 중…</div>
+          <div className="skeleton" style={{ height: 40, marginBottom: 12 }} />
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="skeleton" style={{ height: 44, marginBottom: 8, opacity: 1 - i * 0.13 }} />
+          ))}
+        </div>
+      )}
+
+      {coursesLoaded && tab === "ai" && (
         <AiPlanner
           courses={courses}
           courseByKey={courseByKey}
@@ -175,7 +188,7 @@ function ToolInner() {
         />
       )}
 
-      {tab === "my" && (
+      {coursesLoaded && tab === "my" && (
         <MyPage
           courseByKey={courseByKey}
           goManual={() => setTab("manual")}
@@ -183,7 +196,7 @@ function ToolInner() {
         />
       )}
 
-      {tab === "manual" && (
+      {coursesLoaded && tab === "manual" && (
         <ManualBuilder
           courses={courses}
           courseByKey={courseByKey}
@@ -193,7 +206,7 @@ function ToolInner() {
         />
       )}
 
-      {tab === "backup" && (
+      {coursesLoaded && tab === "backup" && (
         <BackupPage
           courseByKey={courseByKey}
           seed={backupSeed}
