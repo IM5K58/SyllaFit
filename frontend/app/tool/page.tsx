@@ -24,6 +24,7 @@ import AuthButton from "../components/AuthButton";
 import NoticeBanner from "../components/NoticeBanner";
 import AccountSettings from "../components/AccountSettings";
 import { downloadTimetableImage } from "../lib/timetableImage";
+import { ddayInfo, byDeadline } from "../lib/dday";
 import { TimetableProvider, useTimetables, SavedTT } from "../lib/timetableStore";
 import { logEvent } from "../lib/analytics";
 
@@ -377,13 +378,23 @@ function MyPage({
             </p>
           ) : (
             <div style={{ marginTop: 10 }}>
-              {planItems.slice(0, 8).map((p) => (
+              {/* 마감 임박 순으로 정렬한 뒤 상위 8개 — 급한 게 잘리지 않게 (에이전트 페이지와 동일 순서) */}
+              {[...planItems].sort(byDeadline).slice(0, 8).map((p) => {
+                const dd = ddayInfo(p.date_text);
+                const done = p.status === "완료";
+                return (
                 <div key={p.id} className="row"
-                  style={{ justifyContent: "space-between", gap: 8, padding: "7px 0", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
+                  style={{ justifyContent: "space-between", gap: 8, padding: "7px 0", borderBottom: "1px solid var(--border)", flexWrap: "wrap", opacity: done ? 0.55 : 1 }}>
                   <span style={{ flex: 1, minWidth: 180 }}>
                     <span className="tag" style={{ marginRight: 6 }}>{p.category}</span>
                     <a href={p.url} target="_blank" rel="noopener noreferrer"
-                       style={{ color: "var(--text)", fontWeight: 650 }}>{p.title}</a>
+                       style={{ color: "var(--text)", fontWeight: 650, ...(done ? { textDecoration: "line-through" } : {}) }}>{p.title}</a>
+                    {dd && !done && (
+                      <span className={`badge ${dd.days < 0 ? "eval" : dd.days <= 7 ? "team" : "assign"}`}
+                            style={{ marginLeft: 6 }}>
+                        {dd.label}
+                      </span>
+                    )}
                     {p.date_text && <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>⏰ {p.date_text}</span>}
                   </span>
                   <select value={p.status} onChange={(e) => patchPlanStatus(p.id, e.target.value)}
@@ -391,7 +402,8 @@ function MyPage({
                     <option>예정</option><option>진행</option><option>완료</option>
                   </select>
                 </div>
-              ))}
+                );
+              })}
               {planItems.length > 8 && (
                 <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
                   외 {planItems.length - 8}개 — 전체는 에이전트 페이지에서

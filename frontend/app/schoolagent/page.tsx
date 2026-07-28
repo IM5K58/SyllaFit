@@ -9,6 +9,7 @@ import ThemeToggle from "../components/ThemeToggle";
 import AuthButton from "../components/AuthButton";
 import { Course, getCourses } from "../lib/api";
 import { logEvent } from "../lib/analytics";
+import { ddayInfo, byDeadline } from "../lib/dday";
 
 interface AgentResultItem {
   category: string; title: string; reason: string;
@@ -25,6 +26,12 @@ interface SavedTT { name: string; keys: string[] }
 const CATEGORY_ORDER = ["공모전", "행사·특강", "자격증", "커리큘럼", "면접·취준"];
 const GRADES = ["1학년", "2학년", "3학년", "4학년", "졸업예정·유예"];
 const WEEKDAYS = ["월", "화", "수", "목", "금"];
+// 목표 입력 진입장벽 낮추기 — 클릭하면 목표란에 덧붙는다.
+const GOAL_CHIPS = [
+  "공모전 나가보고 싶어요", "자격증 준비 중이에요", "인턴·채용 정보가 필요해요",
+  "교환학생 알아보는 중", "포트폴리오를 만들고 싶어요", "대학원 준비 중이에요",
+];
+
 
 export default function SchoolAgentPage() {
   const { data: session, status } = useSession();
@@ -123,11 +130,16 @@ function AgentBody() {
   const [elapsed, setElapsed] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<AgentResult | null>(null);
+  const [runsLeft, setRunsLeft] = useState<number | null>(null); // 결과 없어도 항상 표시
+  const abortRef = useRef<AbortController | null>(null);         // 실행 취소용
   // 보완 요청
   const [followQ, setFollowQ] = useState("");
   // 내 플랜
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const savedUrls = useMemo(() => new Set(plan.map((p) => p.url)), [plan]);
+
+  // 내 플랜 정렬 — 완료는 뒤로, 마감 임박 순, 날짜 없는 건 그다음, 지난 건 맨 뒤. (lib/dday)
+  const sortedPlan = useMemo(() => [...plan].sort(byDeadline), [plan]);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -145,6 +157,7 @@ function AgentBody() {
     // 이전 세션 복원: 마지막 브리핑 + 프로필 프리필 (새로 시작 누르기 전까지 유지)
     fetch("/api/agent/state").then((r) => (r.ok ? r.json() : null)).then((d) => {
       if (!d) return;
+      if (typeof d.runs_left === "number") setRunsLeft(d.runs_left); // 실행 전에도 남은 횟수 안내
       const p = d.state?.profile;
       if (p) {
         if (typeof p.major === "string") setMajor(p.major);
@@ -168,6 +181,13 @@ function AgentBody() {
     const m: Record<string, Course> = {};
     courses.forEach((c) => (m[c.key] = c));
     return m;
+  }, [courses]);
+
+  // 학과 자동완성 — 개설과목의 실제 전공명에서 뽑는다(표기 흔들림이 검색 품질을 떨어뜨려서).
+  const majorOptions = useMemo(() => {
+    const set = new Set<string>();
+    courses.forEach((c) => { const m = (c.major || "").trim(); if (m) set.add(m); });
+    return [...set].sort((a, b) => a.localeCompare(b, "ko"));
   }, [courses]);
 
   function selectedKeys(): string[] {
@@ -200,14 +220,18 @@ function AgentBody() {
     if (!g) { setErr("목표·하고 싶은 것을 한 줄이라도 적어주세요."); return; }
     setBusy(true); setErr(null); setElapsed(0);
     timer.current = setInterval(() => setElapsed((v) => v + 1), 1000);
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
       const r = await fetch("/api/agent/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profile: { major, grade, goal: g }, timetable_summary: ttSummary }),
+        signal: ac.signal,
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.message || d.error || `HTTP ${r.status}`);
+      if (typeof d.runs_left === "number") setRunsLeft(d.runs_left);
       let next: AgentResult;
       if (extraGoal && result) {
         // 보완 실행: 기존 결과에 병합 (URL 중복 제거)
@@ -228,9 +252,13 @@ function AgentBody() {
         }),
       }).catch(() => {});
     } catch (e) {
-      setErr(String(e instanceof Error ? e.message : e));
+      // 사용자가 직접 취소한 건 오류로 표시하지 않는다.
+      // 주의: 취소는 '기다리기'를 멈추는 것 — 서버 실행이 이미 끝났다면 오늘 횟수는 차감될 수 있다.
+      if (e instanceof DOMException && e.name === "AbortError") setErr(null);
+      else setErr(String(e instanceof Error ? e.message : e));
     } finally {
       if (timer.current) clearInterval(timer.current);
+      abortRef.current = null;
       setBusy(false);
     }
   }
@@ -303,20 +331,34 @@ function AgentBody() {
       <div className="panel">
         <div className="h-sec"><span className="step">2</span>나에 대해 알려주세요</div>
         <div className="row" style={{ gap: 8, marginBottom: 8 }}>
-          <input style={{ flex: 2, minWidth: 160 }} placeholder="학과 (예: 컴퓨터공학과)"
+          <input style={{ flex: 2, minWidth: 160 }} placeholder="학과 (예: 컴퓨터공학)" list="major-options"
             value={major} maxLength={30} onChange={(e) => setMajor(e.target.value)} />
+          <datalist id="major-options">
+            {majorOptions.map((m) => <option key={m} value={m} />)}
+          </datalist>
           <select style={{ flex: 1, minWidth: 110 }} value={grade} onChange={(e) => setGrade(e.target.value)}>
             {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
         </div>
         <textarea rows={3} maxLength={400} value={goal} onChange={(e) => setGoal(e.target.value)}
           placeholder="목표·하고 싶은 것·배우고 싶은 것 (예: 백엔드 개발자가 목표예요. 올해 정보처리기사 따고 공모전도 나가보고 싶어요)" />
+        {/* 목표 입력 도우미 — 클릭하면 문장으로 덧붙는다(자유 입력은 그대로 가능) */}
+        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+          {GOAL_CHIPS.filter((c) => !goal.includes(c)).map((c) => (
+            <button key={c} className="mini" type="button"
+              onClick={() => setGoal((v) => (v.trim() ? `${v.trim()} ${c}` : c))}>
+              + {c}
+            </button>
+          ))}
+        </div>
         <div className="row" style={{ marginTop: 10, gap: 10 }}>
           <button className="primary" onClick={() => run()} disabled={busy || !goal.trim()}>
             {busy ? "에이전트 실행 중…" : "에이전트 실행"}
           </button>
-          {result?.runs_left != null && !busy && (
-            <span className="muted" style={{ fontSize: 12.5 }}>오늘 남은 실행 {result.runs_left}회</span>
+          {runsLeft != null && !busy && (
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              오늘 남은 실행 {runsLeft}회
+            </span>
           )}
         </div>
       </div>
@@ -335,6 +377,10 @@ function AgentBody() {
               <div className="scan-sub">
                 공모전·행사·자격증·커리큘럼·면접 정보를 찾는 중 · {elapsed}초 (보통 1분 내외)
               </div>
+              <button className="mini" style={{ marginTop: 10 }}
+                onClick={() => abortRef.current?.abort()}>
+                취소
+              </button>
             </div>
           </div>
         </div>
@@ -375,7 +421,18 @@ function AgentBody() {
           </p>
 
           {result.items.length === 0 && (
-            <p className="muted">추천할 항목을 찾지 못했어요. 목표를 더 구체적으로 적고 다시 실행해 보세요.</p>
+            <div>
+              <p className="muted" style={{ marginBottom: 8 }}>
+                추천할 항목을 찾지 못했어요. 목표를 조금 더 구체적으로 적으면 훨씬 잘 찾아요.
+              </p>
+              <p className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
+                예시 · <b>“백엔드 개발자가 목표. 정보처리기사 준비 중이고 교내 공모전도 찾고 있어요”</b>
+                처럼 <b>직무·자격증 이름·원하는 활동</b>을 함께 적어보세요.
+              </p>
+              <button className="mini" onClick={() => run()} disabled={busy}>
+                같은 조건으로 다시 실행
+              </button>
+            </div>
           )}
 
           {CATEGORY_ORDER.filter((c) => grouped[c]?.length).map((cat) => (
@@ -384,7 +441,19 @@ function AgentBody() {
               {grouped[cat].map((it) => (
                 <div key={it.url + it.title} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
                   <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <b style={{ fontSize: 14 }}>{it.title}</b>
+                    <b style={{ fontSize: 14 }}>
+                      {it.title}
+                      {(() => {
+                        const dd = ddayInfo(it.date_text);
+                        if (!dd || dd.days < 0) return null;   // 지난 건 이미 백엔드가 거름
+                        return (
+                          <span className={`badge ${dd.days <= 7 ? "team" : "eval"}`}
+                                style={{ marginLeft: 6 }} title="출처에 적힌 일정 기준 — 원문에서 확인하세요">
+                            {dd.label}
+                          </span>
+                        );
+                      })()}
+                    </b>
                     {it.verified ? (
                       <span className="badge ok" title="제목·일정이 출처 내용과 일치하는지 Solar가 대조 확인했어요">
                         {it.date_text ? `${it.date_text} · ` : ""}✓ 출처 확인됨
@@ -428,12 +497,21 @@ function AgentBody() {
         {plan.length === 0 ? (
           <p className="muted">아직 저장한 항목이 없어요. 브리핑에서 “+ 내 플랜”으로 담아보세요.</p>
         ) : (
-          plan.map((p) => (
-            <div key={p.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+          sortedPlan.map((p) => {
+            const dd = ddayInfo(p.date_text);
+            const done = p.status === "완료";
+            return (
+            <div key={p.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)", opacity: done ? 0.55 : 1 }}>
               <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ flex: 1, minWidth: 200 }}>
                   <span className="tag" style={{ marginRight: 6 }}>{p.category}</span>
-                  <b>{p.title}</b>
+                  <b style={done ? { textDecoration: "line-through" } : {}}>{p.title}</b>
+                  {dd && !done && (
+                    <span className={`badge ${dd.days < 0 ? "eval" : dd.days <= 7 ? "team" : "assign"}`}
+                          style={{ marginLeft: 6 }}>
+                      {dd.label}
+                    </span>
+                  )}
                   {p.date_text && <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>⏰ {p.date_text}</span>}
                 </span>
                 <span className="row" style={{ gap: 6 }}>
@@ -453,7 +531,8 @@ function AgentBody() {
                 onBlur={(e) => e.target.value !== p.memo && patchPlan(p.id, { memo: e.target.value })}
               />
             </div>
-          ))
+            );
+          })
         )}
       </div>
     </>
