@@ -1,6 +1,9 @@
 // 마감일(D-day) 계산 — 에이전트 브리핑과 마이페이지 '내 플랜'이 함께 쓴다.
 // 판단 규칙은 백엔드 agent.py의 _date_passed와 같게 유지한다(표시와 필터가 어긋나지 않게).
 
+/** 연도 없는 날짜를 '방금 지난 일정'으로 볼 최대 일수. 이보다 오래됐으면 내년 공고로 본다. */
+const RECENT_PAST_DAYS = 90;
+
 /**
  * date_text에서 '가장 늦은 날짜'(=마감)를 뽑는다.
  * 표기가 없거나 애매하면 null(=D-day 미표시) — 잘못된 마감 표시가 없는 것보다 나쁘다.
@@ -22,13 +25,31 @@ export function parseDeadline(text: string | null): Date | null {
     const y = Number(m[1]);
     push(y < 100 ? y + 2000 : y, Number(m[2]), Number(m[3]));
   }
-  // 연도 없는 '8월 15일' — 올해 기준, 이미 지났으면 내년 공고로 본다(마감 표기 관행)
+  // 연도 없는 표기('8월 15일', '07.20')의 연도 추정 — 백엔드 _date_passed와 같은 규칙.
+  //  · 가까운 과거(RECENT_PAST_DAYS 이내)는 '올해 = 방금 지난 일정'으로 본다
+  //    → "07.20"을 7/30에 보면 '마감'. 지난 걸 D-355로 보여주는 게 가장 위험하다.
+  //  · 먼 과거는 '내년 = 매년 반복되는 공고'로 본다
+  //    → 12월에 본 "2월 15일"은 내년 2월. (이걸 올해로 보면 멀쩡한 공고가 마감으로 뜬다)
+  const yearFor = (mo: number, da: number): number => {
+    const y = today.getFullYear();
+    const asThisYear = new Date(y, mo - 1, da);
+    if (asThisYear >= today) return y;
+    const daysAgo = Math.round((today.getTime() - asThisYear.getTime()) / 86_400_000);
+    return daysAgo <= RECENT_PAST_DAYS ? y : y + 1;
+  };
   if (!found.length) {
     const md = /(\d{1,2})월\s?(\d{1,2})일/g;
     while ((m = md.exec(text))) {
       const mo = Number(m[1]), da = Number(m[2]);
-      const thisYear = new Date(today.getFullYear(), mo - 1, da);
-      push(thisYear < today ? today.getFullYear() + 1 : today.getFullYear(), mo, da);
+      if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) push(yearFor(mo, da), mo, da);
+    }
+  }
+  // 'MM.DD' (예: "원서접수 : 07.20 ~ 07.23") — 시험·접수 일정에 흔한 표기.
+  if (!found.length) {
+    const dot = /\b(\d{1,2})\s?[.\-/]\s?(\d{1,2})\b/g;
+    while ((m = dot.exec(text))) {
+      const mo = Number(m[1]), da = Number(m[2]);
+      if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) push(yearFor(mo, da), mo, da);
     }
   }
   if (!found.length) return null;

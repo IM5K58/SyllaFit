@@ -7,9 +7,12 @@ import { dbEnabled, countTodayEvents, logEvent } from "@/app/lib/db";
 const BACKEND = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 const DAILY_LIMIT = Number(process.env.AGENT_DAILY_LIMIT || 10);
 
-export const maxDuration = 120; // 에이전트 실행 ~60초 — 서버리스 타임아웃 여유
+export const maxDuration = 120; // 에이전트 실행 ~30~60초 — 서버리스 타임아웃 여유
+// maxDuration 안에서 쓸 총 예산. 응답 직렬화·로그 기록 몫을 남겨 120보다 작게 잡는다.
+const BUDGET_MS = 110_000;
 
 export async function POST(req: Request) {
+  const started = Date.now();
   const session = await auth();
   const email = session?.user?.email;
   if (!email) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
@@ -30,7 +33,6 @@ export async function POST(req: Request) {
   const profile = body?.profile && typeof body.profile === "object" ? body.profile : {};
   const timetable_summary = typeof body?.timetable_summary === "string" ? body.timetable_summary : "";
 
-  // Render 무료 플랜은 재시작·콜드스타트 중 연결이 튕길 수 있어 1회 재시도 (총 예산 ~105초)
   async function callBackend(timeoutMs: number): Promise<Response> {
     return fetch(`${BACKEND}/agent/plan`, {
       method: "POST",
@@ -42,19 +44,36 @@ export async function POST(req: Request) {
       signal: AbortSignal.timeout(timeoutMs),
     });
   }
-  let r: Response;
+
+  // 예산 관리: maxDuration(120초) 안에서만 재시도한다.
+  // 종전엔 95초 타임아웃 뒤 90초를 더 기다려(합 188초) 재시도가 Vercel에 강제 종료됐다.
+  // 콜드스타트는 '빠르게' 실패하므로, 타임아웃이 아닐 때만 예산이 남았으면 1회 재시도한다.
+  const left = () => BUDGET_MS - (Date.now() - started);
+  let r: Response | null = null;
+  let timedOut = false;
   try {
-    r = await callBackend(95_000);
-  } catch {
-    try {
-      await new Promise((res) => setTimeout(res, 3_000));
-      r = await callBackend(90_000);
-    } catch {
-      return NextResponse.json(
-        { error: "backend_unreachable", message: "에이전트 서버가 잠에서 깨는 중일 수 있어요. 30초 뒤 다시 실행해 주세요." },
-        { status: 502 },
-      );
+    r = await callBackend(Math.max(10_000, left() - 8_000));
+  } catch (e) {
+    timedOut = e instanceof DOMException && e.name === "TimeoutError";
+    if (!timedOut && left() > 25_000) {
+      try {
+        await new Promise((res) => setTimeout(res, 3_000));
+        r = await callBackend(left() - 5_000);
+      } catch {
+        r = null;
+      }
     }
+  }
+  if (!r) {
+    return timedOut
+      ? NextResponse.json(
+          { error: "agent_timeout", message: "에이전트가 시간 내에 끝나지 않았어요. 목표를 조금 더 구체적으로 적고 다시 실행해 주세요." },
+          { status: 504 },
+        )
+      : NextResponse.json(
+          { error: "backend_unreachable", message: "에이전트 서버가 잠에서 깨는 중일 수 있어요. 30초 뒤 다시 실행해 주세요." },
+          { status: 502 },
+        );
   }
 
   const data = await r.json().catch(() => ({}));
