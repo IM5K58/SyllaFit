@@ -375,7 +375,7 @@ function AgentBody() {
             <div>
               <div className="scan-msg">웹을 검색하며 정리하고 있어요<span className="scan-dots" /></div>
               <div className="scan-sub">
-                공모전·행사·자격증·커리큘럼·면접 정보를 찾는 중 · {elapsed}초 (보통 1분 내외)
+                공모전·행사·자격증·커리큘럼·면접 정보를 찾는 중 · {elapsed}초 (보통 40초 내외)
               </div>
               <button className="mini" style={{ marginTop: 10 }}
                 onClick={() => abortRef.current?.abort()}>

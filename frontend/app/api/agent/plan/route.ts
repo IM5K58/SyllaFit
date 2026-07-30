@@ -7,9 +7,11 @@ import { dbEnabled, countTodayEvents, logEvent } from "@/app/lib/db";
 const BACKEND = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 const DAILY_LIMIT = Number(process.env.AGENT_DAILY_LIMIT || 10);
 
-export const maxDuration = 120; // 에이전트 실행 ~30~60초 — 서버리스 타임아웃 여유
-// maxDuration 안에서 쓸 총 예산. 응답 직렬화·로그 기록 몫을 남겨 120보다 작게 잡는다.
-const BUDGET_MS = 110_000;
+// Vercel Hobby 플랜의 함수 실행 상한은 60초다(그 이상 적어도 60초에서 강제 종료).
+// 백엔드 에이전트는 TIME_BUDGET=45초를 목표로 스스로 단계를 줄인다.
+export const maxDuration = 60;
+// 60초 안에서 쓸 총 예산. 응답 직렬화·이벤트 기록 몫을 남겨 더 작게 잡는다.
+const BUDGET_MS = 55_000;
 
 export async function POST(req: Request) {
   const started = Date.now();
@@ -52,10 +54,11 @@ export async function POST(req: Request) {
   let r: Response | null = null;
   let timedOut = false;
   try {
-    r = await callBackend(Math.max(10_000, left() - 8_000));
+    r = await callBackend(Math.max(10_000, left() - 3_000));
   } catch (e) {
     timedOut = e instanceof DOMException && e.name === "TimeoutError";
-    if (!timedOut && left() > 25_000) {
+    // 재시도는 콜드스타트('빠르게 실패')용. 예산이 넉넉할 때만 — Hobby는 60초뿐이다.
+    if (!timedOut && left() > 30_000) {
       try {
         await new Promise((res) => setTimeout(res, 3_000));
         r = await callBackend(left() - 5_000);

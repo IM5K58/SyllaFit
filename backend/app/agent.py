@@ -33,13 +33,24 @@ KST = timezone(timedelta(hours=9))
 MAX_ROUNDS = 3          # 검색 라운드 상한 (무한 재검색 방지)
 MAX_RESULTS = 24        # 근거 레지스트리 상한 — 40으로 하면 합성이 크게 느려짐(실측 156s)
 SEARCH_EFFORT = "minimal"   # 검색 판단 턴 — 실측상 가벼워서 minimal로 충분
-MAX_PAGE_READS = 4      # 본문 열람 상한 — 페이지 fetch는 느려서 꼭 필요한 것만
+# 합성 모델. 2026-07-30 실측: 같은 프롬프트로 pro3는 42초~타임아웃(3회 중 2회 60초 초과),
+# pro2는 4.5~5.9초로 일관되게 빠르고 JSON도 정상. 근거 수를 18→10으로 줄여도 pro3는
+# 62→58초라 프롬프트 크기 문제가 아니라 서빙 속도 차이였다. 60초 제한 안에선 pro2가 유일 대안.
+SYNTH_MODEL = "solar-pro2"
+MAX_PAGE_READS = 3      # 본문 열람 상한 — 병렬 fetch라 3건까지는 ~2초
+# ── 시간 예산 ────────────────────────────────────────────────────────────
+# Vercel Hobby 플랜은 함수 실행이 60초에서 강제 종료된다. 상수만 줄이면 Solar/네이버
+# 지연 변동에 또 넘치므로, '남은 시간'을 보고 스스로 단계를 줄이도록 만든다.
+# 검사는 '단계 시작 전'에만 하므로 시작 직후 느려지면 초과할 수 있다 → 여유를 넉넉히.
+TIME_BUDGET = 45.0
+# 합성(pro2 ~5초) + 근거검증(병렬 ~2초) 몫에 여유를 더한다 → 약 25초에 검색 중단.
+# 넉넉히 잡는 이유: Solar 서빙이 느려지는 일이 실제로 있었다(pro3가 5초→45초+로 악화).
+SYNTH_RESERVE = 20.0
+REPAIR_COST_EST = 12.0    # 보강 1회(병렬 검색 ~2초 + 2차 합성 ~5초) — 예산에 들어갈 때만
+READ_PHASE_RESERVE = 5.0  # 본문 확인 라운드(Solar 왕복+병렬 fetch)에 필요한 최소 여유
 MIN_PER_CATEGORY = 3    # 카테고리별 최소 근거 수 — 미만이면 '얕다'고 보고 다음 라운드 목표로
 REPAIR_MIN_ITEMS = 4    # 최종 항목이 이보다 적으면 보강(D) 시도
 REPAIR_EXTRA = 12       # 보강 단계에서 추가로 더 모을 수 있는 근거 수
-# 보강은 '있으면 좋은' 단계다. 이 시각(초)을 넘겼으면 건너뛴다 —
-# 프록시 첫 시도 타임아웃(95초)에 걸리면 결과가 아예 안 나가는 게 더 나쁘다(실측 91.5초 사례).
-REPAIR_TIME_BUDGET = 55.0
 PAGE_TIMEOUT = 8.0      # 개별 페이지 fetch 타임아웃(초)
 PAGE_TEXT_CAP = 2500    # 모델에 넘길 본문 길이 상한(자)
 HTML_BYTES_CAP = 400_000  # 파싱 전 원문 절단 — 거대 페이지 방어
@@ -466,7 +477,8 @@ def _numbered_evidence(registry: list[dict], idxs=None) -> str:
 
 
 def _synthesize(registry: list[dict], user_brief: str, today: str,
-                idxs=None, only_cats: list[str] | None = None) -> tuple[str, list[dict]]:
+                idxs=None, only_cats: list[str] | None = None,
+                timeout: float = 30.0) -> tuple[str, list[dict]]:
     """합성 → 출처 가드 → 근거 검증. (summary, items) 반환.
 
     합성은 pro3: open2는 출력 생성이 느려 합성에서 60초+ 소요(실측) — 검색 판단(function
@@ -478,7 +490,7 @@ def _synthesize(registry: list[dict], user_brief: str, today: str,
         [{"role": "system", "content": SYNTH_SYSTEM},
          {"role": "user", "content": f"[오늘 날짜] {today}\n{user_brief}\n\n"
                                      f"[검색 결과]\n{_numbered_evidence(registry, idxs)}{focus}"}],
-        effort="", force_json=True, max_tokens=4096, model="solar-pro3",
+        effort="", force_json=True, max_tokens=2048, model=SYNTH_MODEL, timeout=timeout,
     )
     try:
         data = json.loads(synth.get("content") or "{}")
@@ -560,8 +572,18 @@ def run_agent(profile: dict, timetable_summary: str,
     for _ in range(MAX_ROUNDS + 1):
         if not read_phase and rounds_used >= MAX_ROUNDS:
             break
+        # 합성에 쓸 시간을 못 남길 것 같으면 더 돌지 않고 지금까지 모은 근거로 정리한다.
+        # (완벽한 조사보다 '결과가 시간 안에 나가는 것'이 우선 — Hobby는 60초에 강제 종료)
+        if time.perf_counter() - t0 > TIME_BUDGET - SYNTH_RESERVE:
+            break
         rounds_used += 1
-        msg = _chat(messages, tools=TOOLS, effort=SEARCH_EFFORT)
+        # 라운드 호출도 '합성 몫을 침범하지 않는 선'까지만 기다린다. 느려서 끊기면
+        # 실패로 끝내지 말고 지금까지 모은 근거로 정리한다(결과 0건보다 부분 결과가 낫다).
+        try:
+            msg = _chat(messages, tools=TOOLS, effort=SEARCH_EFFORT,
+                        timeout=max(5.0, TIME_BUDGET - (time.perf_counter() - t0) - SYNTH_RESERVE))
+        except SolarError:
+            break
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             break  # 모델이 "충분하다" 판단
@@ -644,7 +666,9 @@ def run_agent(profile: dict, timetable_summary: str,
         # read_page는 근거 수를 늘리는 게 아니라 이미 모은 항목의 일정을 확정하는 도구라,
         # 여기서 break하면 영영 읽을 기회가 없다(실측: 열람 0회).
         if len(registry) >= MAX_RESULTS:
-            if read_phase or pages_read >= MAX_PAGE_READS:
+            # 본문 확인은 Solar 왕복 1회 + fetch가 더 든다 — 여유가 없으면 건너뛴다.
+            if (read_phase or pages_read >= MAX_PAGE_READS
+                    or time.perf_counter() - t0 > TIME_BUDGET - SYNTH_RESERVE - READ_PHASE_RESERVE):
                 break
             read_phase = True
             messages.append({
@@ -677,7 +701,20 @@ def run_agent(profile: dict, timetable_summary: str,
                 "items": [], "queries": queries, "sources": 0}
 
     today = datetime.now(KST).strftime("%Y년 %m월 %d일")
-    summary, items = _synthesize(registry, user_brief, today)
+
+    # 합성 타임아웃은 '남은 예산'에서 계산한다. 고정값이면 Solar가 느려졌을 때
+    # 전체가 60초(Vercel Hobby 상한)를 넘겨 결과가 통째로 사라진다.
+    def _left(reserve: float = 2.0) -> float:
+        return max(8.0, min(30.0, TIME_BUDGET - (time.perf_counter() - t0) - reserve))
+
+    try:
+        summary, items = _synthesize(registry, user_brief, today, timeout=_left())
+    except SolarError as e:
+        # 근거는 모았는데 정리에서 막힌 경우 — 원인을 사용자 말로 알린다.
+        # (실패로 끝나므로 프록시가 200을 주지 않고, 일일 실행 횟수도 차감되지 않는다)
+        raise SolarError(
+            "정보는 찾았는데 정리하는 데 시간이 부족했어요. 잠시 후 다시 실행해 주세요."
+        ) from e
 
     # ── D. 자기 점검 → 보강(repair) 루프 ────────────────────────────────
     # 산출물을 스스로 보고 '비어 있는 카테고리'를 찾아 한 번 더 메운다.
@@ -687,8 +724,8 @@ def run_agent(profile: dict, timetable_summary: str,
     have = {i["category"] for i in items}
     empty = [c for c in CATEGORIES if c not in have]
     elapsed = time.perf_counter() - t0
-    if elapsed > REPAIR_TIME_BUDGET:
-        empty = []   # 이미 느리면 보강 생략 — 결과를 제때 내보내는 게 우선
+    if elapsed + REPAIR_COST_EST > TIME_BUDGET:
+        empty = []   # 보강까지 하면 예산 초과 — 결과를 제때 내보내는 게 우선
     if empty and (len(items) < REPAIR_MIN_ITEMS or len(empty) >= 2):
         base = len(registry)
         # 보강 검색어는 코드가 만든다 — 무엇이 빈지 이미 확정됐으니 LLM 왕복이 불필요(빠름).
@@ -713,7 +750,7 @@ def run_agent(profile: dict, timetable_summary: str,
         if new_idxs and repaired:
             # 새 근거만 보여주되 번호는 절대 index 유지(src 가드가 계속 유효)
             _, extra = _synthesize(registry, user_brief, today,
-                                   idxs=new_idxs, only_cats=repaired)
+                                   idxs=new_idxs, only_cats=repaired, timeout=_left())
             seen = {i["url"] for i in items}
             items += [e for e in extra if e["url"] not in seen]
 
