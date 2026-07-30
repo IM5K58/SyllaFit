@@ -25,6 +25,22 @@ export function parseDeadline(text: string | null): Date | null {
     const y = Number(m[1]);
     push(y < 100 ? y + 2000 : y, Number(m[2]), Number(m[3]));
   }
+  // 연도가 없고 요일이 붙었으면("9월 11일(수)") 요일로 연도를 역산한다.
+  // 요일이 안 맞는 해는 그 행사의 연도가 아니다 — 지난 행사를 D-43처럼 보여주지 않기 위함.
+  // 백엔드 _date_passed와 같은 규칙(연도 명시가 있으면 그쪽이 우선).
+  if (!found.length) {
+    const dow = /(\d{1,2})\s?[월.\-/]\s?(\d{1,2})\s?일?\s?\(\s?([월화수목금토일])\s?\)/g;
+    while ((m = dow.exec(text))) {
+      const mo = Number(m[1]), da = Number(m[2]);
+      const want = "월화수목금토일".indexOf(m[3]);           // JS: 0=일 이므로 아래서 보정
+      for (let y = today.getFullYear() - 4; y <= today.getFullYear() + 1; y++) {
+        const cand = new Date(y, mo - 1, da);
+        if (cand.getMonth() !== mo - 1 || cand.getDate() !== da) continue;
+        const jsMon0 = (cand.getDay() + 6) % 7;              // 일(0)→6, 월(1)→0
+        if (jsMon0 === want) push(y, mo, da);
+      }
+    }
+  }
   // 연도 없는 표기('8월 15일', '07.20')의 연도 추정 — 백엔드 _date_passed와 같은 규칙.
   //  · 가까운 과거(RECENT_PAST_DAYS 이내)는 '올해 = 방금 지난 일정'으로 본다
   //    → "07.20"을 7/30에 보면 '마감'. 지난 걸 D-355로 보여주는 게 가장 위험하다.

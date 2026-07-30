@@ -244,7 +244,14 @@ SYNTH_SYSTEM = """너는 인하대학교 학생의 학교생활·커리어 에�
 - 이 학생과 관련 없는 결과는 과감히 제외하라: 타 대학 내부 행사, 광고·홍보성 글,
   학원 수강 후기, 목표와 무관한 직무의 정보 등.
 - 오늘 날짜가 함께 주어진다. 마감·접수 종료가 이미 지난 것이 명백한 일정은 items에
-  넣지 마라. (예: 오늘이 7월인데 4월 마감 공모전) 연중 상시·날짜 미상은 유지."""
+  넣지 마라. (예: 오늘이 7월인데 4월 마감 공모전) 연중 상시·날짜 미상은 유지.
+- 각 근거 끝에 **출처 작성 시점**이 붙어 있다("최근" / "약 N개월 전" / "작성일 미상").
+  · 작성이 **1년 이상 전**인 근거로 특정 날짜 행사(공모전·특강·설명회)를 추천하지 마라.
+    지난해 행사일 가능성이 높다. (자격증 제도·공부 로드맵처럼 해마다 유효한 정보는 괜찮다)
+  · **작성일 미상**인데 연도 없이 날짜만 적힌 행사("9월 11일(수) 특강")도 지난 행사일 수
+    있다. 확신이 없으면 items에 넣지 말고, 넣더라도 date_text는 비워라.
+- date_text에는 **연도를 포함**하라(출처에 연도가 있을 때). 연도 없는 날짜는 지난 행사와
+  구별할 수 없다."""
 
 # 근거 검증(groundedness) — 합성 결과 각 항목이 실제 출처 스니펫에 뒷받침되는지 별도 대조.
 # 전용 groundedness-check 모델은 API에서 내려갔고(실측 400), 작은 모델+프롬프트가 더 빠르고
@@ -310,6 +317,11 @@ def _chat(messages: list, *, tools=None, effort: str, force_json: bool = False,
 _D_FULL = re.compile(r"(20\d{2}|\d{2})[.\-/년]\s?(\d{1,2})[.\-/월]\s?(\d{1,2})")
 _D_ENG = re.compile(r"(\d{1,2})\s(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s(20\d{2})", re.I)
 _D_MD = re.compile(r"(\d{1,2})월\s?(\d{1,2})일")
+# 요일이 붙은 연도 없는 날짜: "9월 11일(수)", "9.11(수)".
+# 요일은 연도를 특정하는 강한 단서다 — 2026-09-11은 금요일이라 "(수)"면 2026년이 아니다.
+# 실측: '스킬업 취업특강 9월11일(수)'(=2024년 행사)가 연도가 없어 미래로 통과했다.
+_D_MD_DOW = re.compile(r"(\d{1,2})\s?[월.\-/]\s?(\d{1,2})\s?일?\s?\(\s?([월화수목금토일])\s?\)")
+_DOW_IDX = {d: i for i, d in enumerate("월화수목금토일")}  # Python weekday(): 월=0
 # 연도 없는 'MM.DD' (예: "원서접수 : 07.20 ~ 07.23") — 한국 시험·접수 일정에서 매우 흔하다.
 # 본문 열람(read_page)을 붙이자 이 형식이 들어오기 시작했고, 파싱이 안 돼 이미 지난
 # 일정이 그대로 노출됐다(실측). date_text 전용이라 문맥이 이미 '날짜'여서 오탐 위험은 낮다.
@@ -327,6 +339,8 @@ def _date_passed(text: str) -> bool:
     '출처 확인' 라벨에 맡김).
     """
     today = datetime.now(KST).date()
+
+    # ① 연도가 명시된 날짜가 최우선 — 추론보다 명시가 언제나 정확하다.
     dates = []
     for y, m, d in _D_FULL.findall(text):
         try:
@@ -339,6 +353,24 @@ def _date_passed(text: str) -> bool:
             dates.append(datetime(int(y), _ENG_MON[mon.lower()[:3]], int(d)).date())
         except (ValueError, KeyError):
             pass
+    if dates:
+        return max(dates) < today
+
+    # ② 연도가 없을 때, 요일이 붙어 있으면 그것으로 연도를 역산한다.
+    #    "9월 11일(수)"의 요일이 맞는 연도를 최근 5년에서 찾고, 가장 늦은 날이 오늘보다
+    #    이전이면 지난 행사다. (연도 없는 옛 행사 글이 '올해 미래'로 통과하던 구멍을 막음)
+    dow_dates = []
+    for m, d, w in _D_MD_DOW.findall(text):
+        want = _DOW_IDX[w]
+        for y in range(today.year - 4, today.year + 2):
+            try:
+                cand = datetime(y, int(m), int(d)).date()
+            except ValueError:
+                continue
+            if cand.weekday() == want:
+                dow_dates.append(cand)
+    if dow_dates:
+        return max(dow_dates) < today
     # 연도 없는 표기의 연도 추정 — 프론트 lib/dday.ts와 같은 규칙을 쓴다.
     #  · 가까운 과거(RECENT_PAST_DAYS 이내) → 올해(= 방금 지난 일정) → 걸러낸다
     #  · 먼 과거 → 내년(= 매년 반복되는 공고) → 남긴다
@@ -394,6 +426,30 @@ def _safe_search(query: str) -> list[dict]:
         return []
 
 
+def _source_age(date_str: str | None) -> str:
+    """출처의 작성 시점을 사람이 읽는 문구로. 네이버 pubDate는 '29 Jul 2026' 형식.
+
+    웹문서는 작성일이 아예 없어(실측) 모델이 몇 년 전 글인지 알 수 없었다.
+    '미상'을 명시해 오래된 행사 글을 경계하게 만든다.
+    """
+    if not date_str:
+        return "작성일 미상"
+    m = re.search(r"(\d{1,2})\s+([A-Za-z]{3})\s+(20\d{2})", date_str)
+    if not m:
+        return "작성일 미상"
+    try:
+        d = datetime(int(m.group(3)), _ENG_MON[m.group(2).lower()], int(m.group(1))).date()
+    except (ValueError, KeyError):
+        return "작성일 미상"
+    days = (datetime.now(KST).date() - d).days
+    if days < 0:
+        return "최근"
+    if days < 45:
+        return "최근"
+    months = days // 30
+    return f"약 {months}개월 전" if months < 24 else f"약 {days // 365}년 전"
+
+
 def _numbered_evidence(registry: list[dict], idxs=None) -> str:
     """근거 목록 문자열. idxs를 주면 그 항목만 넣되 번호는 절대 index를 유지한다
     (보강 합성에서 새 근거만 보여주면서도 src 번호가 어긋나지 않게)."""
@@ -405,7 +461,7 @@ def _numbered_evidence(registry: list[dict], idxs=None) -> str:
         # 본문을 읽은 근거는 '날짜가 있는 구간'을 골라 넣는다 — 앞부분만 자르면 정작
         # 필요한 접수·마감 일정을 놓친다(실측: 4건을 읽었는데 date_text가 전부 비었음).
         ev = f"{_date_excerpt(body)} (본문 확인)" if body else r["snippet"][:160]
-        lines.append(f"[{i+1}] {r['title']} | {ev}" + (f" | 날짜: {r['date']}" if r.get("date") else ""))
+        lines.append(f"[{i+1}] {r['title']} | {ev} | 출처 {_source_age(r.get('date'))}")
     return "\n".join(lines)
 
 
